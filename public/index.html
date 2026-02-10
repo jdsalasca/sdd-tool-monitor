@@ -118,6 +118,18 @@
       return Math.floor((Date.now() - ms) / 60000);
     }
 
+    function humanDuration(ms) {
+      const totalMs = Number(ms || 0);
+      if (!Number.isFinite(totalMs) || totalMs <= 0) return '0s';
+      const totalSec = Math.floor(totalMs / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      if (h > 0) return `${h}h ${m}m ${s}s`;
+      if (m > 0) return `${m}m ${s}s`;
+      return `${s}s`;
+    }
+
     function renderStageBar(project) {
       const stages = project.stage?.stages || {};
       const current = project.runStatus?.stageCurrent || project.stage?.current || 'discovery';
@@ -144,6 +156,11 @@
       const model = esc(project.runStatus?.raw?.model || 'n/a');
       const heartbeat = Number(project.activity?.freshnessMinutes ?? 9999);
       const stale = Boolean(project.activity?.stalled);
+      const aiLastDurationMs = Number(project.prompt?.lastDurationMs || 0);
+      const aiAvgDurationMs = Number(project.prompt?.recentAvgDurationMs || 0);
+      const aiMaxDurationMs = Number(project.prompt?.recentMaxDurationMs || 0);
+      const aiLastAt = project.prompt?.lastAt || '';
+      const aiAgeMinutes = minutesFromIso(aiLastAt);
       const blockReasons = (project.blockReasons || []).map((x) => `<li>${esc(x)}</li>`).join('');
       const recentPromptRuns = (project.prompt?.recent || []).slice(-4).map((row) => {
         const stage = esc(row.stage || 'unknown');
@@ -201,6 +218,7 @@
           <div class='stage-bar'>${renderStageBar(project)}</div>
           <div class='text'>Heartbeat: ${esc(heartbeat)}m ${stale ? '| STALLED' : '| active'} | Last run status: ${esc(project.activity?.lastRunStatusAt || 'n/a')}</div>
           <div class='text'>AI: ${provider} | Model: ${model} | Sprint cycle: ${esc(project.campaign?.cycle ?? 0)}</div>
+          <div class='text'>AI timing: last=${esc(humanDuration(aiLastDurationMs))} | avg(6)=${esc(humanDuration(aiAvgDurationMs))} | max(6)=${esc(humanDuration(aiMaxDurationMs))} | last event ${esc(aiAgeMinutes ?? 'n/a')}m ago</div>
           <div class='text'>Suite: running=${suite.running ? 'true' : 'false'} | pid=${esc(suite.suitePid || 0)} | phase=${esc(suite.phase || 'n/a')} | target=${esc(suite.targetStage || 'n/a')} | stalls=${esc(suite.stallCount || 0)}</div>
           <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
           ${idleFault}
@@ -379,13 +397,14 @@
         const stageText = p.runStatus?.stageCurrent || p.stage.current;
         const heartbeat = Number(p.activity?.freshnessMinutes ?? 9999);
         const stale = Boolean(p.activity?.stalled);
+        const aiLast = Number(p.prompt?.lastDurationMs || 0);
         tr.innerHTML = `
           <td class='mono'>${esc(p.name)}</td>
           <td><span class='tag ${p.health}'>${esc(p.health)}</span></td>
           <td>${esc(p.valueScore)}</td>
           <td class='mono'>${esc(stageText)}<br><span class='muted'>${esc(p.stageProgress?.percent || 0)}%</span></td>
           <td>${esc(lifecycleText)}</td>
-          <td class='mono'>${esc(runningText)}<br><span class='muted'>hb ${esc(heartbeat)}m${stale ? ' stalled' : ''}</span></td>
+          <td class='mono'>${esc(runningText)}<br><span class='muted'>hb ${esc(heartbeat)}m${stale ? ' stalled' : ''} | ai ${esc(humanDuration(aiLast))}</span></td>
           <td>${esc(campaignText)}</td>
           <td><button class='btn icon' onclick='event.stopPropagation();refreshProjectByName("${esc(p.name)}")' title='Refresh project'>↻</button></td>
         `;

@@ -205,16 +205,29 @@ function parsePromptMeta(projectRoot) {
       lastAt: "",
       lastStage: "",
       lastOk: false,
+      lastDurationMs: 0,
+      recentAvgDurationMs: 0,
+      recentMaxDurationMs: 0,
       lastPromptPreview: "",
       lastOutputPreview: "",
       recent: []
     };
   }
+  const durations = rows
+    .map((row) => Number(row.durationMs || 0))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  const sum = durations.reduce((acc, value) => acc + value, 0);
+  const avg = durations.length > 0 ? Math.round(sum / durations.length) : 0;
+  const max = durations.length > 0 ? Math.max(...durations) : 0;
+  const lastDurationMs = Number(last.durationMs || 0);
   return {
     present: true,
     lastAt: String(last.at || ""),
     lastStage: String(last.stage || ""),
     lastOk: Boolean(last.ok),
+    lastDurationMs: Number.isFinite(lastDurationMs) ? lastDurationMs : 0,
+    recentAvgDurationMs: avg,
+    recentMaxDurationMs: max,
     lastPromptPreview: String(last.promptPreview || ""),
     lastOutputPreview: String(last.outputPreview || ""),
     lastPromptFull: typeof lastFull?.prompt === "string" ? lastFull.prompt.slice(0, 3000) : "",
