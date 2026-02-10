@@ -5,7 +5,7 @@ import fs from "fs";
 import { execSync, spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { resolveWorkspaceRoot } from "./config.js";
-import { getProjectDetail, scanProjects } from "./scanner.js";
+import { scanProjects } from "./scanner.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -190,31 +190,78 @@ export async function startMonitorServer(options) {
   const subscribers = new Set();
   const actionInFlight = new Map();
   const actionCooldownMs = 6000;
+  const minScanIntervalMs = Math.max(1200, Math.min(5000, Math.floor(Math.max(1000, options.refreshMs) / 2)));
+  let snapshotCache = null;
+  let snapshotUpdatedAtMs = 0;
+  let scanPromise = null;
+  let watcherDebounce = null;
 
   app.use(express.json());
   app.use(express.static(path.join(__dirname, "..", "public")));
 
+  const loadSnapshot = async (force = false) => {
+    const now = Date.now();
+    if (!force && snapshotCache && now - snapshotUpdatedAtMs < minScanIntervalMs) {
+      return snapshotCache;
+    }
+    if (scanPromise) {
+      return scanPromise;
+    }
+    scanPromise = scanProjects(workspaceRoot)
+      .then((snapshot) => {
+        snapshotCache = snapshot;
+        snapshotUpdatedAtMs = Date.now();
+        return snapshot;
+      })
+      .finally(() => {
+        scanPromise = null;
+      });
+    return scanPromise;
+  };
+
+  const pushSnapshot = async (force = false) => {
+    const snapshot = await loadSnapshot(force);
+    const payload = withMonitorMeta(snapshot, options);
+    for (const sub of subscribers) {
+      sseWrite(sub, payload);
+    }
+    return snapshot;
+  };
+
   app.get("/api/health", (_req, res) => {
+    const snapshotAgeSeconds = snapshotUpdatedAtMs > 0 ? Math.max(0, Math.floor((Date.now() - snapshotUpdatedAtMs) / 1000)) : -1;
     res.json({
       ok: true,
       workspaceRoot,
       at: new Date().toISOString(),
-      monitor: { refreshMs: Math.max(1000, options.refreshMs), stream: "sse+fswatch" }
+      monitor: {
+        refreshMs: Math.max(1000, options.refreshMs),
+        stream: "sse+fswatch",
+        snapshotAgeSeconds,
+        scanInFlight: Boolean(scanPromise)
+      }
     });
   });
 
   app.get("/api/status", async (_req, res) => {
-    const snapshot = await scanProjects(workspaceRoot);
+    const snapshot = await loadSnapshot(false);
     res.json(withMonitorMeta(snapshot, options));
   });
 
   app.get("/api/project/:name", async (req, res) => {
-    const detail = await getProjectDetail(req.params.name, workspaceRoot);
-    if (!detail.project) {
+    const snapshot = await loadSnapshot(false);
+    const found = Array.isArray(snapshot?.projects) ? snapshot.projects.find((item) => item?.name === req.params.name) : null;
+    if (!found) {
       res.status(404).json({ ok: false, error: "project_not_found", project: req.params.name });
       return;
     }
-    res.json({ ok: true, ...detail, monitor: { refreshMs: Math.max(1000, options.refreshMs), stream: "sse+fswatch" } });
+    res.json({
+      ok: true,
+      at: snapshot.at,
+      workspaceRoot: snapshot.workspaceRoot,
+      project: found,
+      monitor: { refreshMs: Math.max(1000, options.refreshMs), stream: "sse+fswatch" }
+    });
   });
 
   app.post("/api/project/:name/action", async (req, res) => {
@@ -250,8 +297,9 @@ export async function startMonitorServer(options) {
       }
 
       if (action === "reload") {
-        const refreshed = await getProjectDetail(req.params.name, workspaceRoot);
-        res.json({ ok: true, action, project: req.params.name, detail: refreshed.project || null });
+        const refreshed = await loadSnapshot(true);
+        const projectRefreshed = Array.isArray(refreshed?.projects) ? refreshed.projects.find((item) => item?.name === req.params.name) : null;
+        res.json({ ok: true, action, project: req.params.name, detail: projectRefreshed || null });
         return;
       }
 
@@ -305,7 +353,7 @@ export async function startMonitorServer(options) {
     res.flushHeaders?.();
 
     subscribers.add(res);
-    const snapshot = await scanProjects(workspaceRoot);
+    const snapshot = await loadSnapshot(false);
     sseWrite(res, withMonitorMeta(snapshot, options));
 
     const keepAlive = setInterval(() => {
@@ -320,33 +368,36 @@ export async function startMonitorServer(options) {
   });
 
   const server = app.listen(options.port, options.host, async () => {
-    const snapshot = await scanProjects(workspaceRoot);
+    const snapshot = await loadSnapshot(true);
     console.log(`sdd-tool-monitor listening on http://${options.host}:${options.port}`);
     console.log(`Workspace: ${snapshot.workspaceRoot}`);
     console.log(
       `Projects: ${snapshot.summary.total} | Healthy: ${snapshot.summary.healthy} | Recovering: ${snapshot.summary.recovering || 0} | Critical: ${snapshot.summary.critical} | Running: ${snapshot.summary.runningProcesses}`
     );
   });
-
-  const pushSnapshot = async () => {
-    const snapshot = await scanProjects(workspaceRoot);
-    const payload = withMonitorMeta(snapshot, options);
-    for (const sub of subscribers) {
-      sseWrite(sub, payload);
-    }
-  };
-
-  const refreshTimer = setInterval(pushSnapshot, Math.max(1000, options.refreshMs));
+  const refreshTimer = setInterval(() => {
+    pushSnapshot(false).catch(() => {});
+  }, Math.max(1000, options.refreshMs));
   const watcher = chokidar.watch(workspaceRoot, {
     ignoreInitial: true,
     depth: 6,
     awaitWriteFinish: { stabilityThreshold: 600, pollInterval: 100 }
   });
   watcher.on("all", () => {
-    pushSnapshot().catch(() => {});
+    if (watcherDebounce) {
+      clearTimeout(watcherDebounce);
+    }
+    watcherDebounce = setTimeout(() => {
+      pushSnapshot(true).catch(() => {});
+      watcherDebounce = null;
+    }, 900);
   });
 
   const shutdown = () => {
+    if (watcherDebounce) {
+      clearTimeout(watcherDebounce);
+      watcherDebounce = null;
+    }
     clearInterval(refreshTimer);
     watcher.close().catch(() => {});
     server.close(() => process.exit(0));
