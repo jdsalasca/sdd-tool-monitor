@@ -3,6 +3,18 @@ import path from "path";
 import { execSync } from "child_process";
 import { resolveWorkspaceRoot } from "./config.js";
 
+const STAGE_ORDER = [
+  "discovery",
+  "functional_requirements",
+  "technical_backlog",
+  "implementation",
+  "quality_validation",
+  "role_review",
+  "release_candidate",
+  "final_release",
+  "runtime_start"
+];
+
 function readJson(file) {
   if (!fs.existsSync(file)) return null;
   try {
@@ -128,18 +140,7 @@ function parseDigitalReview(projectRoot) {
 function parseStage(projectRoot) {
   const parsed = readJson(path.join(projectRoot, ".sdd-stage-state.json"));
   const stages = parsed?.stages || {};
-  const order = [
-    "discovery",
-    "functional_requirements",
-    "technical_backlog",
-    "implementation",
-    "quality_validation",
-    "role_review",
-    "release_candidate",
-    "final_release",
-    "runtime_start"
-  ];
-  const current = order.find((stage) => stages[stage] !== "passed") || "runtime_start";
+  const current = STAGE_ORDER.find((stage) => stages[stage] !== "passed") || "runtime_start";
   return { stages, current, history: Array.isArray(parsed?.history) ? parsed.history.slice(-20) : [] };
 }
 
@@ -483,6 +484,45 @@ function parseStageProducts(projectRoot, releases) {
   return catalog;
 }
 
+function isoToMs(value) {
+  const parsed = Date.parse(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function buildStageProgress(stage) {
+  const completed = STAGE_ORDER.filter((name) => stage.stages?.[name] === "passed").length;
+  const currentIndex = Math.max(0, STAGE_ORDER.indexOf(stage.current));
+  const percent = STAGE_ORDER.length === 0 ? 0 : Math.round((completed / STAGE_ORDER.length) * 100);
+  return {
+    order: STAGE_ORDER,
+    completed,
+    total: STAGE_ORDER.length,
+    currentIndex,
+    percent
+  };
+}
+
+function buildActivitySignals({ runStatus, prompt, campaign, stageTimeline, running }) {
+  const lastRunStatusMs = isoToMs(runStatus.raw?.at);
+  const lastPromptMs = isoToMs(prompt.lastAt);
+  const lastCampaignMs = isoToMs(campaign.updatedAt);
+  const lastStageMs = isoToMs(stageTimeline.at(-1)?.at);
+  const freshestMs = Math.max(lastRunStatusMs, lastPromptMs, lastCampaignMs, lastStageMs, 0);
+  const freshnessMinutes = freshestMs > 0 ? Math.floor((Date.now() - freshestMs) / 60000) : Number.POSITIVE_INFINITY;
+  const activeRun = Boolean(running?.active || campaign.running);
+  const staleThresholdMinutes = activeRun ? 8 : 20;
+  const stalled = activeRun && freshnessMinutes >= staleThresholdMinutes;
+  return {
+    lastRunStatusAt: runStatus.raw?.at || "",
+    lastPromptAt: prompt.lastAt || "",
+    lastCampaignAt: campaign.updatedAt || "",
+    freshestAt: freshestMs > 0 ? new Date(freshestMs).toISOString() : "",
+    freshnessMinutes: Number.isFinite(freshnessMinutes) ? freshnessMinutes : 9999,
+    stalled,
+    staleThresholdMinutes
+  };
+}
+
 function buildProjectRow(projectRoot, name, processRows) {
   const lifecycle = parseLifecycle(projectRoot);
   const review = parseDigitalReview(projectRoot);
@@ -516,7 +556,25 @@ function buildProjectRow(projectRoot, name, processRows) {
   const idleBeforeMinimum = detectIdleBeforeMinimum(campaign, running);
   const valueScore = computeValueScore(stage, lifecycle, review, releases);
   const recovery = suggestRecoveryCommand(name, stage, lifecycle);
-  const health = idleBeforeMinimum?.failed ? "critical" : getProjectHealth(stage, lifecycle, review);
+  const stageTimeline = Array.isArray(stage.history)
+    ? stage.history.slice(-10).map((row) => ({
+        at: String(row?.at || ""),
+        stage: String(row?.stage || ""),
+        status: String(row?.status || row?.state || "")
+      }))
+    : [];
+  const activity = buildActivitySignals({ runStatus, prompt, campaign, stageTimeline, running });
+  const blocked =
+    Boolean(idleBeforeMinimum?.failed) ||
+    Boolean(activity.stalled) ||
+    lifecycle.fail > 0 ||
+    (runStatus.blockers || []).length > 0;
+  const health = blocked ? "critical" : getProjectHealth(stage, lifecycle, review);
+  const blockReasons = [];
+  if (idleBeforeMinimum?.failed) blockReasons.push("idle-before-minimum-runtime");
+  if (activity.stalled) blockReasons.push(`stalled-no-heartbeat-${activity.freshnessMinutes}m`);
+  if ((runStatus.blockers || []).length > 0) blockReasons.push("run-status-blockers");
+  if (lifecycle.fail > 0) blockReasons.push("lifecycle-failures");
 
   return {
     name,
@@ -525,13 +583,8 @@ function buildProjectRow(projectRoot, name, processRows) {
     lifecycle,
     review,
     campaign,
-    stageTimeline: Array.isArray(stage.history)
-      ? stage.history.slice(-10).map((row) => ({
-          at: String(row?.at || ""),
-          stage: String(row?.stage || ""),
-          status: String(row?.status || row?.state || "")
-        }))
-      : [],
+    stageTimeline,
+    stageProgress: buildStageProgress(stage),
     prompt,
     runStatus,
     releases,
@@ -539,6 +592,9 @@ function buildProjectRow(projectRoot, name, processRows) {
     life,
     stageProducts: parseStageProducts(projectRoot, releases),
     running,
+    activity,
+    blocked,
+    blockReasons,
     idleBeforeMinimum,
     health,
     valueScore,
@@ -579,7 +635,8 @@ export async function scanProjects(explicitWorkspace) {
     runningCampaigns: projects.filter((p) => p.campaign.present && (p.campaign.running || p.running.active)).length,
     runningProcesses: projects.filter((p) => p.running.active).length,
     idleBeforeMinimum: projects.filter((p) => p.idleBeforeMinimum?.failed).length,
-    blockedProjects: projects.filter((p) => (p.runStatus?.blockers || []).length > 0 || p.lifecycle.fail > 0 || p.idleBeforeMinimum?.failed).length,
+    stalledProjects: projects.filter((p) => p.activity?.stalled).length,
+    blockedProjects: projects.filter((p) => p.blocked).length,
     avgValueScore: projects.length === 0 ? 0 : Math.round(projects.reduce((acc, p) => acc + p.valueScore, 0) / projects.length)
   };
 

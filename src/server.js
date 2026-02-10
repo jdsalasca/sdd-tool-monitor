@@ -13,6 +13,16 @@ function sseWrite(res, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+function withMonitorMeta(snapshot, options) {
+  return {
+    ...snapshot,
+    monitor: {
+      refreshMs: Math.max(1000, options.refreshMs),
+      stream: "sse+fswatch"
+    }
+  };
+}
+
 export async function startMonitorServer(options) {
   const workspaceRoot = resolveWorkspaceRoot(options.workspace);
   const app = express();
@@ -22,12 +32,17 @@ export async function startMonitorServer(options) {
   app.use(express.static(path.join(__dirname, "..", "public")));
 
   app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, workspaceRoot, at: new Date().toISOString() });
+    res.json({
+      ok: true,
+      workspaceRoot,
+      at: new Date().toISOString(),
+      monitor: { refreshMs: Math.max(1000, options.refreshMs), stream: "sse+fswatch" }
+    });
   });
 
   app.get("/api/status", async (_req, res) => {
     const snapshot = await scanProjects(workspaceRoot);
-    res.json(snapshot);
+    res.json(withMonitorMeta(snapshot, options));
   });
 
   app.get("/api/project/:name", async (req, res) => {
@@ -36,7 +51,7 @@ export async function startMonitorServer(options) {
       res.status(404).json({ ok: false, error: "project_not_found", project: req.params.name });
       return;
     }
-    res.json({ ok: true, ...detail });
+    res.json({ ok: true, ...detail, monitor: { refreshMs: Math.max(1000, options.refreshMs), stream: "sse+fswatch" } });
   });
 
   app.get("/api/stream", async (_req, res) => {
@@ -47,7 +62,7 @@ export async function startMonitorServer(options) {
 
     subscribers.add(res);
     const snapshot = await scanProjects(workspaceRoot);
-    sseWrite(res, snapshot);
+    sseWrite(res, withMonitorMeta(snapshot, options));
 
     const keepAlive = setInterval(() => {
       res.write(`: keepalive ${Date.now()}\n\n`);
@@ -69,8 +84,9 @@ export async function startMonitorServer(options) {
 
   const pushSnapshot = async () => {
     const snapshot = await scanProjects(workspaceRoot);
+    const payload = withMonitorMeta(snapshot, options);
     for (const sub of subscribers) {
-      sseWrite(sub, snapshot);
+      sseWrite(sub, payload);
     }
   };
 
