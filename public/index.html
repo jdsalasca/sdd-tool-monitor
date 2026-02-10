@@ -120,6 +120,8 @@
         const err = esc(row.error || '');
         return `<li>${stage} | ${ok} | ${ms}ms${err ? ` | ${err}` : ''}</li>`;
       }).join('');
+      const qualityTrend = project.iterationMetrics || {};
+      const qualityTrendText = `total=${qualityTrend.total || 0} passed=${qualityTrend.passed || 0} failed=${qualityTrend.failed || 0} lastRound=${qualityTrend.lastRound || 0} ${esc(qualityTrend.lastPhase || '')}:${esc(qualityTrend.lastResult || '')}`;
       const runningText = project.running?.active
         ? `PID ${project.running.processId}\n${esc(project.running.command)}`
         : 'No running sdd-tool process for this project right now.';
@@ -162,6 +164,10 @@
         <div class='card'>
           <h3>Recent AI Attempts</h3>
           <ul class='text'>${recentPromptRuns || '<li>no entries</li>'}</ul>
+        </div>
+        <div class='card'>
+          <h3>Quality Trend</h3>
+          <div class='text mono'>${qualityTrendText}</div>
         </div>
         <div class='card'>
           <h3>Blocking Issues</h3>

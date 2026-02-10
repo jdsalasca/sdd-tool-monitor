@@ -296,6 +296,35 @@ function parseOrchestrationJournal(projectRoot) {
   return rows.slice(-8);
 }
 
+function parseIterationMetrics(projectRoot) {
+  const file = path.join(projectRoot, "generated-app", "deploy", "iteration-metrics.json");
+  const parsed = readJson(file);
+  const metrics = Array.isArray(parsed?.metrics) ? parsed.metrics : [];
+  if (metrics.length === 0) {
+    return {
+      total: 0,
+      passed: 0,
+      failed: 0,
+      lastRound: 0,
+      lastPhase: "",
+      lastResult: "",
+      recent: []
+    };
+  }
+  const passed = metrics.filter((item) => item?.result === "passed").length;
+  const failed = metrics.filter((item) => item?.result === "failed").length;
+  const last = metrics[metrics.length - 1] || {};
+  return {
+    total: metrics.length,
+    passed,
+    failed,
+    lastRound: Number(last.round || 0),
+    lastPhase: String(last.phase || ""),
+    lastResult: String(last.result || ""),
+    recent: metrics.slice(-8)
+  };
+}
+
 function buildProjectRow(projectRoot, name, processRows) {
   const lifecycle = parseLifecycle(projectRoot);
   const review = parseDigitalReview(projectRoot);
@@ -304,6 +333,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const prompt = parsePromptMeta(projectRoot);
   const runStatus = parseRunStatus(projectRoot);
   const releases = parseReleases(projectRoot);
+  const iterationMetrics = parseIterationMetrics(projectRoot);
   const health = getProjectHealth(stage, lifecycle, review);
   const running = detectRunningProcess(name, processRows);
   if (!running.active && campaign.present && !campaign.targetPassed && campaign.updatedAt) {
@@ -333,6 +363,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     prompt,
     runStatus,
     releases,
+    iterationMetrics,
     running,
     health,
     valueScore,
