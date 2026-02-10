@@ -44,6 +44,7 @@
     .text { font-size: 12px; line-height: 1.35; white-space: pre-wrap; }
     .btn { background: #1d3359; color: var(--ink); border: 1px solid #2b4b80; border-radius: 7px; padding: 6px 8px; font-size: 11px; cursor: pointer; }
     .btn:hover { background: #24447a; }
+    .select { background: #122444; color: var(--ink); border: 1px solid #2b4b80; border-radius: 7px; padding: 5px 8px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -131,6 +132,16 @@
       const timeline = (project.stageTimeline || [])
         .map((row) => `<li>${esc(row.at)} | ${esc(row.stage)} | ${esc(row.status)}</li>`)
         .join('');
+      const stageProducts = project.stageProducts || {};
+      const stageOptions = Object.keys(stageProducts).map((stageKey) => {
+        const selected = (project.__selectedStage || project.stage?.current || 'discovery') === stageKey ? 'selected' : '';
+        return `<option value="${esc(stageKey)}" ${selected}>${esc(stageKey)}</option>`;
+      }).join('');
+      const selectedStage = project.__selectedStage || project.stage?.current || 'discovery';
+      const selectedProducts = Array.isArray(stageProducts[selectedStage]) ? stageProducts[selectedStage] : [];
+      const productsHtml = selectedProducts.map((item) =>
+        `<li>${item.present ? 'OK' : 'MISSING'} | ${esc(item.label || '')} | <span class='mono'>${esc(item.path || '')}</span></li>`
+      ).join('');
 
       container.innerHTML = `
         <div class='card'>
@@ -191,8 +202,26 @@
           <h3>Stage Timeline</h3>
           <ul class='text'>${timeline || '<li>no stage transitions yet</li>'}</ul>
         </div>
+        <div class='card'>
+          <h3>Stage Products</h3>
+          <div class='text'>
+            <label for='stage-select'>Stage:</label>
+            <select id='stage-select' class='select' onchange='selectStage(this.value)'>
+              ${stageOptions}
+            </select>
+          </div>
+          <ul class='text'>${productsHtml || '<li>no products indexed for this stage</li>'}</ul>
+        </div>
       `;
     }
+
+    window.selectStage = (stageName) => {
+      if (!state.snapshot) return;
+      const project = state.snapshot.projects.find((p) => p.name === state.selected);
+      if (!project) return;
+      project.__selectedStage = stageName;
+      renderDetail(project);
+    };
 
     window.copyRecovery = () => {
       const text = document.getElementById('recover-cmd')?.textContent || '';

@@ -332,6 +332,101 @@ function parseIterationMetrics(projectRoot) {
   };
 }
 
+function findLatestRequirementDir(projectRoot) {
+  const bases = ["backlog", "wip", "in-progress", "done", "archived"].map((status) =>
+    path.join(projectRoot, "requirements", status)
+  );
+  let latest = { dir: "", mtimeMs: 0 };
+  for (const base of bases) {
+    if (!fs.existsSync(base)) continue;
+    for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(base, entry.name);
+      let mtimeMs = 0;
+      try {
+        mtimeMs = fs.statSync(full).mtimeMs;
+      } catch {
+        mtimeMs = 0;
+      }
+      if (mtimeMs >= latest.mtimeMs) {
+        latest = { dir: full, mtimeMs };
+      }
+    }
+  }
+  return latest.dir || "";
+}
+
+function findByCandidates(root, candidates) {
+  for (const rel of candidates) {
+    const full = path.join(root, rel);
+    if (fs.existsSync(full)) {
+      return rel.replace(/\\/g, "/");
+    }
+  }
+  return "";
+}
+
+function parseStageProducts(projectRoot, releases) {
+  const appRoot = path.join(projectRoot, "generated-app");
+  const latestReq = findLatestRequirementDir(projectRoot);
+  const reqRel = latestReq ? path.relative(projectRoot, latestReq).replace(/\\/g, "/") : "";
+  const inReq = (file) => (reqRel ? `${reqRel}/${file}` : `requirements/**/${file}`);
+  const hasReqFile = (file) => (latestReq ? fs.existsSync(path.join(latestReq, file)) : false);
+
+  const catalog = {
+    discovery: [
+      { label: "Project metadata", path: "metadata.json", present: fs.existsSync(path.join(projectRoot, "metadata.json")) },
+      { label: "Run status", path: "sdd-run-status.json", present: fs.existsSync(path.join(projectRoot, "sdd-run-status.json")) },
+      { label: "Orchestration journal", path: "orchestration-journal.jsonl", present: fs.existsSync(path.join(projectRoot, "orchestration-journal.jsonl")) }
+    ],
+    functional_requirements: [
+      { label: "Requirement document", path: inReq("requirement.md"), present: hasReqFile("requirement.md") },
+      { label: "Functional spec", path: inReq("functional-spec.md"), present: hasReqFile("functional-spec.md") }
+    ],
+    technical_backlog: [
+      { label: "Technical spec", path: inReq("technical-spec.md"), present: hasReqFile("technical-spec.md") },
+      { label: "Architecture", path: inReq("architecture.md"), present: hasReqFile("architecture.md") },
+      { label: "Test plan", path: inReq("test-plan.md"), present: hasReqFile("test-plan.md") }
+    ],
+    implementation: [
+      { label: "Generated app root", path: "generated-app/", present: fs.existsSync(appRoot) },
+      {
+        label: "Runtime manifest",
+        path: findByCandidates(appRoot, ["package.json", "requirements.txt", "backend/pom.xml", "frontend/package.json"]) || "generated-app/{package.json|requirements.txt|backend/pom.xml|frontend/package.json}",
+        present:
+          fs.existsSync(path.join(appRoot, "package.json")) ||
+          fs.existsSync(path.join(appRoot, "requirements.txt")) ||
+          fs.existsSync(path.join(appRoot, "backend", "pom.xml")) ||
+          fs.existsSync(path.join(appRoot, "frontend", "package.json"))
+      },
+      { label: "README", path: "generated-app/README.md", present: fs.existsSync(path.join(appRoot, "README.md")) }
+    ],
+    quality_validation: [
+      { label: "Lifecycle report", path: "generated-app/deploy/lifecycle-report.json", present: fs.existsSync(path.join(appRoot, "deploy", "lifecycle-report.json")) },
+      { label: "Iteration metrics", path: "generated-app/deploy/iteration-metrics.json", present: fs.existsSync(path.join(appRoot, "deploy", "iteration-metrics.json")) },
+      { label: "Quality backlog", path: "generated-app/deploy/quality-backlog.json", present: fs.existsSync(path.join(appRoot, "deploy", "quality-backlog.json")) }
+    ],
+    role_review: [
+      { label: "Digital review report", path: "generated-app/deploy/digital-review-report.json", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-report.json")) },
+      { label: "User stories backlog", path: "generated-app/deploy/digital-review-user-stories.md", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-user-stories.md")) },
+      { label: "Review rounds", path: "generated-app/deploy/digital-review-rounds.jsonl", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-rounds.jsonl")) }
+    ],
+    release_candidate: [
+      { label: "Release history", path: "generated-app/deploy/release-history.json", present: fs.existsSync(path.join(appRoot, "deploy", "release-history.json")) },
+      { label: "Candidate releases", path: "generated-app/deploy/releases/", present: releases.candidates > 0 }
+    ],
+    final_release: [
+      { label: "Final release history", path: "generated-app/deploy/release-history.json", present: releases.finals > 0 },
+      { label: "Deployment report", path: "generated-app/deploy/deployment.md", present: fs.existsSync(path.join(appRoot, "deploy", "deployment.md")) }
+    ],
+    runtime_start: [
+      { label: "Runtime process metadata", path: "generated-app/deploy/runtime-processes.json", present: fs.existsSync(path.join(appRoot, "deploy", "runtime-processes.json")) },
+      { label: "Campaign state", path: "suite-campaign-state.json", present: fs.existsSync(path.join(projectRoot, "suite-campaign-state.json")) }
+    ]
+  };
+  return catalog;
+}
+
 function buildProjectRow(projectRoot, name, processRows) {
   const lifecycle = parseLifecycle(projectRoot);
   const review = parseDigitalReview(projectRoot);
@@ -383,6 +478,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     runStatus,
     releases,
     iterationMetrics,
+    stageProducts: parseStageProducts(projectRoot, releases),
     running,
     health,
     valueScore,
