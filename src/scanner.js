@@ -31,7 +31,20 @@ function safeParseJsonLine(line) {
 
 function readJsonlTail(file, max = 10) {
   if (!fs.existsSync(file)) return [];
-  const lines = readText(file).split(/\r?\n/).filter(Boolean);
+  let raw = "";
+  try {
+    const stat = fs.statSync(file);
+    const tailBytes = Math.min(stat.size, 256 * 1024);
+    const start = Math.max(0, stat.size - tailBytes);
+    const fd = fs.openSync(file, "r");
+    const buffer = Buffer.alloc(tailBytes);
+    fs.readSync(fd, buffer, 0, tailBytes, start);
+    fs.closeSync(fd);
+    raw = buffer.toString("utf-8");
+  } catch {
+    raw = readText(file);
+  }
+  const lines = raw.split(/\r?\n/).filter(Boolean);
   return lines.slice(Math.max(0, lines.length - max)).map(safeParseJsonLine).filter(Boolean);
 }
 
@@ -196,7 +209,8 @@ function listSddProcesses() {
         try {
           return execFileSync(bin, ["-NoProfile", "-Command", psCommand], {
             encoding: "utf-8",
-            stdio: ["ignore", "pipe", "ignore"]
+            stdio: ["ignore", "pipe", "ignore"],
+            timeout: 3500
           }).trim();
         } catch {
           return "";
@@ -353,7 +367,10 @@ export async function scanProjects(explicitWorkspace) {
       const looksLikeProject =
         fs.existsSync(path.join(projectRoot, "metadata.json")) ||
         fs.existsSync(path.join(projectRoot, ".sdd-stage-state.json")) ||
-        fs.existsSync(path.join(projectRoot, "requirements"));
+        fs.existsSync(path.join(projectRoot, "requirements")) ||
+        fs.existsSync(path.join(projectRoot, "sdd-run-status.json")) ||
+        fs.existsSync(path.join(projectRoot, "debug", "provider-prompts.metadata.jsonl")) ||
+        fs.existsSync(path.join(projectRoot, "suite-campaign-state.json"));
       if (!looksLikeProject) continue;
       projects.push(buildProjectRow(projectRoot, entry.name, processRows));
     }

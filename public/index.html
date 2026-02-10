@@ -111,6 +111,15 @@
       const latestPromptFull = esc(project.prompt?.lastPromptFull || 'n/a');
       const latestOutputFull = esc(project.prompt?.lastOutputFull || 'n/a');
       const blockers = (project.runStatus?.blockers || []);
+      const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
+      const model = esc(project.runStatus?.raw?.model || 'n/a');
+      const recentPromptRuns = (project.prompt?.recent || []).slice(-4).map((row) => {
+        const stage = esc(row.stage || 'unknown');
+        const ok = row.ok ? 'ok' : 'fail';
+        const ms = Number(row.durationMs || 0);
+        const err = esc(row.error || '');
+        return `<li>${stage} | ${ok} | ${ms}ms${err ? ` | ${err}` : ''}</li>`;
+      }).join('');
       const runningText = project.running?.active
         ? `PID ${project.running.processId}\n${esc(project.running.command)}`
         : 'No running sdd-tool process for this project right now.';
@@ -122,6 +131,7 @@
           <h3>${esc(project.name)}</h3>
           <div class='text'>Root: ${esc(project.projectRoot)}</div>
           <div class='text'>Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current)} | Step: ${esc(project.runStatus?.step || 'n/a')} | Value score: ${esc(project.valueScore)}</div>
+          <div class='text'>AI: ${provider} | Model: ${model} | Sprint cycle: ${esc(project.campaign?.cycle ?? 0)}</div>
         </div>
         <div class='card'>
           <h3>Recovery Command</h3>
@@ -148,6 +158,10 @@
             <summary class='text muted'>Show full output payload</summary>
             <div class='text mono'>${latestOutputFull}</div>
           </details>
+        </div>
+        <div class='card'>
+          <h3>Recent AI Attempts</h3>
+          <ul class='text'>${recentPromptRuns || '<li>no entries</li>'}</ul>
         </div>
         <div class='card'>
           <h3>Blocking Issues</h3>
