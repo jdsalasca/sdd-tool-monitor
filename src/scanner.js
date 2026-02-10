@@ -292,6 +292,25 @@ function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
 function listSddProcesses() {
   try {
     if (process.platform === "win32") {
+      try {
+        const psCmd =
+          "powershell -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\"Name='node.exe'\\\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress\"";
+        const rawPs = execSync(psCmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4500 }).trim();
+        if (rawPs) {
+          const parsed = JSON.parse(rawPs);
+          const rows = (Array.isArray(parsed) ? parsed : [parsed])
+            .map((row) => ({
+              processId: Number(row?.ProcessId || 0),
+              command: String(row?.CommandLine || "").trim()
+            }))
+            .filter((row) => Number.isFinite(row.processId) && row.processId > 0 && /dist[\\/]cli\.js/i.test(row.command));
+          if (rows.length > 0) {
+            return rows;
+          }
+        }
+      } catch {
+        // fallback to wmic
+      }
       const cmd = "wmic process where \"name='node.exe'\" get ProcessId,CommandLine /format:csv";
       const raw = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 }).trim();
       if (!raw) return [];
@@ -328,6 +347,20 @@ function listSddProcesses() {
   } catch {
     return [];
   }
+}
+
+function parseSuiteLock(workspaceRoot) {
+  const lockFile = path.join(workspaceRoot, ".sdd-suite-lock.json");
+  const parsed = readJson(lockFile);
+  const pid = Number(parsed?.pid || 0);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return { present: false, pid: 0, startedAt: "" };
+  }
+  return {
+    present: true,
+    pid,
+    startedAt: String(parsed?.startedAt || "")
+  };
 }
 
 function commandMentionsProject(command, projectName) {
@@ -808,6 +841,7 @@ export async function scanProjects(explicitWorkspace) {
   const workspaceRoot = resolveWorkspaceRoot(explicitWorkspace);
   const projects = [];
   const processRows = listSddProcesses();
+  const suiteLock = parseSuiteLock(workspaceRoot);
 
   if (fs.existsSync(workspaceRoot)) {
     const entries = fs.readdirSync(workspaceRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
@@ -822,6 +856,24 @@ export async function scanProjects(explicitWorkspace) {
         fs.existsSync(path.join(projectRoot, "suite-campaign-state.json"));
       if (!looksLikeProject) continue;
       projects.push(buildProjectRow(projectRoot, entry.name, processRows));
+    }
+  }
+
+  if (suiteLock.present && isProcessAlive(suiteLock.pid)) {
+    const lockPidTracked = projects.some((project) => project.running?.active && Number(project.running.processId || 0) === suiteLock.pid);
+    if (!lockPidTracked) {
+      const candidate = projects
+        .filter((project) => project.campaign?.present && project.campaign?.running !== false)
+        .sort((a, b) => {
+          const aMs = Date.parse(a.campaign?.updatedAt || "") || 0;
+          const bMs = Date.parse(b.campaign?.updatedAt || "") || 0;
+          return bMs - aMs;
+        })[0];
+      if (candidate) {
+        candidate.running.active = true;
+        candidate.running.processId = suiteLock.pid;
+        candidate.running.command = "inferred from workspace suite lock";
+      }
     }
   }
 
