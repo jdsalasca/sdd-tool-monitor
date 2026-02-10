@@ -175,6 +175,22 @@ function parseCampaign(projectRoot) {
   };
 }
 
+function detectIdleBeforeMinimum(campaign, running) {
+  if (!campaign?.present) return null;
+  const minMinutes = 360;
+  const active = Boolean(running?.active);
+  const endedOrIdle = campaign.running === false && !active;
+  if (!endedOrIdle) return null;
+  if (campaign.targetPassed) return null;
+  if (Number(campaign.elapsedMinutes || 0) >= minMinutes) return null;
+  return {
+    failed: true,
+    minMinutes,
+    elapsedMinutes: Number(campaign.elapsedMinutes || 0),
+    message: `Campaign went idle before ${minMinutes} minutes (${campaign.elapsedMinutes}m).`
+  };
+}
+
 function parsePromptMeta(projectRoot) {
   const metadataFile = path.join(projectRoot, "debug", "provider-prompts.metadata.jsonl");
   const fullFile = path.join(projectRoot, "debug", "provider-prompts.jsonl");
@@ -461,7 +477,6 @@ function buildProjectRow(projectRoot, name, processRows) {
   const releases = parseReleases(projectRoot);
   const iterationMetrics = parseIterationMetrics(projectRoot);
   const life = parseLifeArtifacts(projectRoot);
-  const health = getProjectHealth(stage, lifecycle, review);
   const running = detectRunningProcess(name, processRows);
   if (!running.active && campaign.present && campaign.running) {
     running.active = true;
@@ -482,8 +497,10 @@ function buildProjectRow(projectRoot, name, processRows) {
       running.command = "inferred from fresh run-status activity";
     }
   }
+  const idleBeforeMinimum = detectIdleBeforeMinimum(campaign, running);
   const valueScore = computeValueScore(stage, lifecycle, review, releases);
   const recovery = suggestRecoveryCommand(name, stage, lifecycle);
+  const health = idleBeforeMinimum?.failed ? "critical" : getProjectHealth(stage, lifecycle, review);
 
   return {
     name,
@@ -506,6 +523,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     life,
     stageProducts: parseStageProducts(projectRoot, releases),
     running,
+    idleBeforeMinimum,
     health,
     valueScore,
     recovery: runStatus.recovery?.command || recovery,
@@ -542,9 +560,10 @@ export async function scanProjects(explicitWorkspace) {
     healthy: projects.filter((p) => p.health === "healthy").length,
     critical: projects.filter((p) => p.health === "critical").length,
     unhealthy: projects.filter((p) => p.health !== "healthy").length,
-    runningCampaigns: projects.filter((p) => p.campaign.present && (p.campaign.running || !p.campaign.targetPassed)).length,
+    runningCampaigns: projects.filter((p) => p.campaign.present && (p.campaign.running || p.running.active)).length,
     runningProcesses: projects.filter((p) => p.running.active).length,
-    blockedProjects: projects.filter((p) => (p.runStatus?.blockers || []).length > 0 || p.lifecycle.fail > 0).length,
+    idleBeforeMinimum: projects.filter((p) => p.idleBeforeMinimum?.failed).length,
+    blockedProjects: projects.filter((p) => (p.runStatus?.blockers || []).length > 0 || p.lifecycle.fail > 0 || p.idleBeforeMinimum?.failed).length,
     avgValueScore: projects.length === 0 ? 0 : Math.round(projects.reduce((acc, p) => acc + p.valueScore, 0) / projects.length)
   };
 

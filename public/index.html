@@ -21,7 +21,7 @@
     .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 14px; }
     .title { font-size: 24px; font-weight: 700; letter-spacing: 0.2px; }
     .sub { color: var(--muted); font-size: 13px; }
-    .grid { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 8px; margin: 12px 0 14px; }
+    .grid { display: grid; grid-template-columns: repeat(8, minmax(120px, 1fr)); gap: 8px; margin: 12px 0 14px; }
     .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
     .kpi .k { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
     .kpi .v { font-size: 23px; font-weight: 700; }
@@ -63,6 +63,7 @@
       <div class="kpi"><div class="k">Critical</div><div id="k-critical" class="v">0</div></div>
       <div class="kpi"><div class="k">Running Campaigns</div><div id="k-campaigns" class="v">0</div></div>
       <div class="kpi"><div class="k">Running Processes</div><div id="k-running" class="v">0</div></div>
+      <div class="kpi"><div class="k">Idle < 6h</div><div id="k-idle" class="v">0</div></div>
       <div class="kpi"><div class="k">Blocked Projects</div><div id="k-blocked" class="v">0</div></div>
       <div class="kpi"><div class="k">Avg Value Score</div><div id="k-value" class="v">0</div></div>
     </div>
@@ -127,6 +128,9 @@
       const runningText = project.running?.active
         ? `PID ${project.running.processId || suite.suitePid || 0}\n${esc(project.running.command)}`
         : 'No running sdd-tool process for this project right now.';
+      const idleFault = project.idleBeforeMinimum?.failed
+        ? `<div class='text' style='color:#ff6b6b'><b>Idle Fault:</b> ${esc(project.idleBeforeMinimum.message || '')}</div>`
+        : "";
       const fails = (project.lifecycle?.failItems || []).slice(-5).map((x) => `<li>${esc(x)}</li>`).join('');
       const journal = (project.journal || []).slice(-5).map((row) => `<li>${esc(row.at || '')} - ${esc(row.event || '')} ${esc(row.details || '')}</li>`).join('');
       const timeline = (project.stageTimeline || [])
@@ -162,6 +166,7 @@
           <div class='text'>AI: ${provider} | Model: ${model} | Sprint cycle: ${esc(project.campaign?.cycle ?? 0)}</div>
           <div class='text'>Suite: running=${suite.running ? 'true' : 'false'} | pid=${esc(suite.suitePid || 0)} | phase=${esc(suite.phase || 'n/a')} | target=${esc(suite.targetStage || 'n/a')} | stalls=${esc(suite.stallCount || 0)}</div>
           <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
+          ${idleFault}
         </div>
         <div class='card'>
           <h3>Recovery Command</h3>
@@ -271,6 +276,7 @@
       setText('k-critical', String(snapshot.summary.critical));
       setText('k-campaigns', String(snapshot.summary.runningCampaigns));
       setText('k-running', String(snapshot.summary.runningProcesses));
+      setText('k-idle', String(snapshot.summary.idleBeforeMinimum || 0));
       setText('k-blocked', String(snapshot.summary.blockedProjects || 0));
       setText('k-value', String(snapshot.summary.avgValueScore));
 
