@@ -260,8 +260,10 @@ function parseRuntimeVisualProbe(projectRoot) {
     ok: Boolean(parsed.ok),
     captured: Boolean(parsed.captured),
     blankLikely: Boolean(parsed.blankLikely),
+    staticLikely: Boolean(parsed.staticLikely),
     summary: String(parsed.summary || ""),
-    screenshotPath: String(parsed.screenshotPath || "")
+    screenshotPath: String(parsed.screenshotPath || ""),
+    stats: parsed.stats && typeof parsed.stats === "object" ? parsed.stats : null
   };
 }
 
