@@ -273,19 +273,47 @@ function parseSoftwareDiagnostic(projectRoot) {
     return {
       present: false,
       summary: "",
+      qualityScore: 0,
       blockingIssues: [],
       httpStatus: "",
       reachableUrl: "",
-      interactionStatus: ""
+      interactionStatus: "",
+      interactionRounds: 0,
+      clickableCount: 0,
+      clicksPerformed: 0,
+      uiLabels: [],
+      functionalChecks: [],
+      actionTimeline: []
     };
   }
   return {
     present: true,
     summary: String(parsed.summary || ""),
+    qualityScore: Number(parsed.qualityScore || 0),
     blockingIssues: Array.isArray(parsed.blockingIssues) ? parsed.blockingIssues.slice(0, 8).map((v) => String(v)) : [],
     httpStatus: String(parsed?.http?.status || ""),
     reachableUrl: String(parsed?.http?.reachableUrl || ""),
-    interactionStatus: String(parsed?.interaction?.status || "")
+    interactionStatus: String(parsed?.interaction?.status || ""),
+    interactionRounds: Number(parsed?.interaction?.rounds || 0),
+    clickableCount: Number(parsed?.interaction?.clickableCount || 0),
+    clicksPerformed: Number(parsed?.interaction?.clicksPerformed || 0),
+    uiLabels: Array.isArray(parsed?.interaction?.uiLabels) ? parsed.interaction.uiLabels.slice(0, 20).map((v) => String(v)) : [],
+    functionalChecks: Array.isArray(parsed?.interaction?.functionalChecks)
+      ? parsed.interaction.functionalChecks.slice(0, 12).map((row) => ({
+          name: String(row?.name || ""),
+          status: String(row?.status || ""),
+          detail: String(row?.detail || "")
+        }))
+      : [],
+    actionTimeline: Array.isArray(parsed?.interaction?.actionTimeline)
+      ? parsed.interaction.actionTimeline.slice(-12).map((row) => ({
+          at: String(row?.at || ""),
+          action: String(row?.action || ""),
+          target: String(row?.target || ""),
+          result: String(row?.result || ""),
+          detail: String(row?.detail || "")
+        }))
+      : []
   };
 }
 
