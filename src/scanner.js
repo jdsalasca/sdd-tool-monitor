@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { execFileSync, execSync } from "child_process";
+import { execSync } from "child_process";
 import { resolveWorkspaceRoot } from "./config.js";
 
 function readJson(file) {
@@ -202,29 +202,9 @@ function parsePromptMeta(projectRoot) {
 function listSddProcesses() {
   try {
     if (process.platform === "win32") {
-      const psCommand =
-        "Get-CimInstance Win32_Process -Filter \"name='node.exe'\" | " +
-        "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
-      const runPs = (bin) => {
-        try {
-          return execFileSync(bin, ["-NoProfile", "-Command", psCommand], {
-            encoding: "utf-8",
-            stdio: ["ignore", "pipe", "ignore"],
-            timeout: 3500
-          }).trim();
-        } catch {
-          return "";
-        }
-      };
-      const raw = runPs("pwsh") || runPs("powershell");
-      if (!raw) {
-        return [];
-      }
-      const parsed = JSON.parse(raw);
-      const rows = Array.isArray(parsed) ? parsed : [parsed];
-      return rows
-        .map((row) => ({ processId: Number(row?.ProcessId || 0), command: String(row?.CommandLine || "") }))
-        .filter((row) => Number.isFinite(row.processId) && row.processId > 0 && /dist[\\/]+cli\.js/i.test(row.command));
+      // Windows process introspection via CIM can hang on some hosts and block monitor responses.
+      // Keep API responsive and infer active runs from run-status/campaign freshness instead.
+      return [];
     }
     const raw = execSync("ps -ax -o pid= -o command=", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
     return raw
@@ -331,6 +311,13 @@ function buildProjectRow(projectRoot, name, processRows) {
     if (Number.isFinite(updatedMs) && Date.now() - updatedMs <= 180000) {
       running.active = true;
       running.command = "inferred from fresh campaign state";
+    }
+  }
+  if (!running.active && runStatus.present) {
+    const runUpdatedMs = Date.parse(runStatus.raw?.at || "");
+    if (Number.isFinite(runUpdatedMs) && Date.now() - runUpdatedMs <= 180000) {
+      running.active = true;
+      running.command = "inferred from fresh run-status activity";
     }
   }
   const valueScore = computeValueScore(stage, lifecycle, review, releases);
