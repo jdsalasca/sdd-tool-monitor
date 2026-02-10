@@ -40,6 +40,7 @@ Options:
 - `--host <ip>`: default `127.0.0.1`.
 - `--port <n>`: default `4317`.
 - `--refresh-ms <n>`: default `5000`.
+- `--pid-file <path>`: where to write monitor runtime metadata (`monitor.pid.json` by default).
 - `--once --json`: one-shot machine-readable snapshot.
 
 ## Quick diagnostics
@@ -76,3 +77,4 @@ curl http://127.0.0.1:4317/api/health
 This monitor surfaces quality truth quickly; it does not auto-fix projects by itself.
 Use it together with `sdd-tool suite ...` to run long autonomous campaigns and track progress in real time.
 `sdd-tool-monitor` is independent from `sdd-tool` (no runtime coupling required).
+When running as server mode, monitor writes `monitor.pid.json` with pid/url metadata for quick reconnect/recovery.
