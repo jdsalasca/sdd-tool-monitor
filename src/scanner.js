@@ -160,6 +160,13 @@ function parseCampaign(projectRoot) {
     cycle: Number(state.cycle || 0),
     elapsedMinutes: Number(state.elapsedMinutes || 0),
     autonomous: Boolean(state.autonomous),
+    running: Boolean(state.running),
+    suitePid: Number(state.suitePid || 0),
+    phase: String(state.phase || ""),
+    lastError: String(state.lastError || ""),
+    model: String(state.model || ""),
+    nextFromStep: String(state.nextFromStep || ""),
+    stallCount: Number(state.stallCount || 0),
     targetPassed: Boolean(state.targetPassed),
     qualityPassed: Boolean(state.qualityPassed),
     runtimePassed: Boolean(state.runtimePassed),
@@ -336,6 +343,11 @@ function buildProjectRow(projectRoot, name, processRows) {
   const iterationMetrics = parseIterationMetrics(projectRoot);
   const health = getProjectHealth(stage, lifecycle, review);
   const running = detectRunningProcess(name, processRows);
+  if (!running.active && campaign.present && campaign.running) {
+    running.active = true;
+    running.processId = Number.isFinite(campaign.suitePid) ? campaign.suitePid : 0;
+    running.command = campaign.phase ? `suite ${campaign.phase}` : "suite campaign running";
+  }
   if (!running.active && campaign.present && !campaign.targetPassed && campaign.updatedAt) {
     const updatedMs = Date.parse(campaign.updatedAt);
     if (Number.isFinite(updatedMs) && Date.now() - updatedMs <= 180000) {
@@ -360,6 +372,13 @@ function buildProjectRow(projectRoot, name, processRows) {
     lifecycle,
     review,
     campaign,
+    stageTimeline: Array.isArray(stage.history)
+      ? stage.history.slice(-10).map((row) => ({
+          at: String(row?.at || ""),
+          stage: String(row?.stage || ""),
+          status: String(row?.status || row?.state || "")
+        }))
+      : [],
     prompt,
     runStatus,
     releases,
@@ -401,7 +420,7 @@ export async function scanProjects(explicitWorkspace) {
     healthy: projects.filter((p) => p.health === "healthy").length,
     critical: projects.filter((p) => p.health === "critical").length,
     unhealthy: projects.filter((p) => p.health !== "healthy").length,
-    runningCampaigns: projects.filter((p) => p.campaign.present && !p.campaign.targetPassed).length,
+    runningCampaigns: projects.filter((p) => p.campaign.present && (p.campaign.running || !p.campaign.targetPassed)).length,
     runningProcesses: projects.filter((p) => p.running.active).length,
     blockedProjects: projects.filter((p) => (p.runStatus?.blockers || []).length > 0 || p.lifecycle.fail > 0).length,
     avgValueScore: projects.length === 0 ? 0 : Math.round(projects.reduce((acc, p) => acc + p.valueScore, 0) / projects.length)

@@ -122,11 +122,15 @@
       }).join('');
       const qualityTrend = project.iterationMetrics || {};
       const qualityTrendText = `total=${qualityTrend.total || 0} passed=${qualityTrend.passed || 0} failed=${qualityTrend.failed || 0} lastRound=${qualityTrend.lastRound || 0} ${esc(qualityTrend.lastPhase || '')}:${esc(qualityTrend.lastResult || '')}`;
+      const suite = project.campaign || {};
       const runningText = project.running?.active
-        ? `PID ${project.running.processId}\n${esc(project.running.command)}`
+        ? `PID ${project.running.processId || suite.suitePid || 0}\n${esc(project.running.command)}`
         : 'No running sdd-tool process for this project right now.';
       const fails = (project.lifecycle?.failItems || []).slice(-5).map((x) => `<li>${esc(x)}</li>`).join('');
       const journal = (project.journal || []).slice(-5).map((row) => `<li>${esc(row.at || '')} - ${esc(row.event || '')} ${esc(row.details || '')}</li>`).join('');
+      const timeline = (project.stageTimeline || [])
+        .map((row) => `<li>${esc(row.at)} | ${esc(row.stage)} | ${esc(row.status)}</li>`)
+        .join('');
 
       container.innerHTML = `
         <div class='card'>
@@ -134,6 +138,8 @@
           <div class='text'>Root: ${esc(project.projectRoot)}</div>
           <div class='text'>Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current)} | Step: ${esc(project.runStatus?.step || 'n/a')} | Value score: ${esc(project.valueScore)}</div>
           <div class='text'>AI: ${provider} | Model: ${model} | Sprint cycle: ${esc(project.campaign?.cycle ?? 0)}</div>
+          <div class='text'>Suite: running=${suite.running ? 'true' : 'false'} | pid=${esc(suite.suitePid || 0)} | phase=${esc(suite.phase || 'n/a')} | target=${esc(suite.targetStage || 'n/a')} | stalls=${esc(suite.stallCount || 0)}</div>
+          <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
         </div>
         <div class='card'>
           <h3>Recovery Command</h3>
@@ -181,6 +187,10 @@
           <h3>Orchestration Journal</h3>
           <ul class='text'>${journal || '<li>no entries</li>'}</ul>
         </div>
+        <div class='card'>
+          <h3>Stage Timeline</h3>
+          <ul class='text'>${timeline || '<li>no stage transitions yet</li>'}</ul>
+        </div>
       `;
     }
 
@@ -212,9 +222,12 @@
         const tr = document.createElement('tr');
         if (p.name === state.selected) tr.classList.add('active');
         tr.onclick = () => { state.selected = p.name; render(state.snapshot); };
-        const campaignText = p.campaign.present ? `cycle ${p.campaign.cycle} | ${p.campaign.elapsedMinutes}m` : 'idle';
+        const campaignText = p.campaign.present
+          ? `cycle ${p.campaign.cycle} | ${p.campaign.elapsedMinutes}m | ${p.campaign.phase || 'n/a'}`
+          : 'idle';
         const lifecycleText = p.lifecycle.present ? `OK:${p.lifecycle.ok} FAIL:${p.lifecycle.fail}` : 'missing';
-        const runningText = p.running?.active ? `PID ${p.running.processId}` : 'idle';
+        const runningPid = p.running?.processId || p.campaign?.suitePid || 0;
+        const runningText = p.running?.active ? `PID ${runningPid}` : 'idle';
         const stageText = p.runStatus?.stageCurrent || p.stage.current;
         tr.innerHTML = `
           <td class='mono'>${esc(p.name)}</td>
