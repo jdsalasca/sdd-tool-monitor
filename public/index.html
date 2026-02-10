@@ -20,6 +20,7 @@
     body { margin: 0; font-family: "Segoe UI", "SF Pro Text", system-ui, sans-serif; background: radial-gradient(circle at 20% 20%, #132445, var(--bg)); color: var(--ink); }
     .wrap { max-width: 1640px; margin: 16px auto; padding: 0 14px 24px; }
     .top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 12px; }
+    .top-right { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
     .title { font-size: 25px; font-weight: 700; letter-spacing: 0.2px; margin-bottom: 2px; }
     .sub { color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
     #updated { text-align: right; }
@@ -57,6 +58,9 @@
     .btn.restart { border-color: #7f2d2d; background: #3b1c1f; }
     .btn.restart:hover { background: #532328; }
     .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: #0f1d34; }
+    .view-toggle button { border: 0; background: transparent; color: var(--muted); padding: 6px 10px; font-size: 11px; cursor: pointer; }
+    .view-toggle button.active { background: #21406f; color: var(--ink); font-weight: 700; }
     .select { background: #122444; color: var(--ink); border: 1px solid #2b4b80; border-radius: 7px; padding: 5px 8px; font-size: 12px; }
     .stage-bar { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
     .stage-pill { border-radius: 999px; padding: 3px 6px; font-size: 10px; text-align: center; border: 1px solid var(--line); color: var(--muted); }
@@ -70,6 +74,7 @@
       .table-wrap { max-height: 50vh; }
       .detail { max-height: none; }
       #updated { text-align: left; }
+      .top-right { align-items: flex-start; }
     }
     @media (max-width: 780px) {
       .top { flex-direction: column; }
@@ -88,7 +93,13 @@
         <div id="refresh-info" class="sub">Refresh: detecting...</div>
         <div id="action-status" class="sub"></div>
       </div>
-      <div id="updated" class="sub">waiting updates...</div>
+      <div class="top-right">
+        <div class="view-toggle">
+          <button id="view-exec" class="active" onclick="setViewMode('executive')">Executive</button>
+          <button id="view-tech" onclick="setViewMode('technical')">Technical</button>
+        </div>
+        <div id="updated" class="sub">waiting updates...</div>
+      </div>
     </div>
 
     <div class="grid">
@@ -132,7 +143,7 @@
   </div>
 
   <script>
-    const state = { snapshot: null, selected: null };
+    const state = { snapshot: null, selected: null, viewMode: 'executive' };
     const stageOrder = ['discovery','functional_requirements','technical_backlog','implementation','quality_validation','role_review','release_candidate','final_release','runtime_start'];
     const setText = (id, value) => { document.getElementById(id).textContent = value; };
 
@@ -233,6 +244,10 @@
         `<li>${esc(row.at || '')} | ${esc(row.stage || '')} | ${esc(row.summary || '')}</li>`
       ).join('');
 
+      const isExecutive = state.viewMode === 'executive';
+      const showExec = (html) => isExecutive ? html : '';
+      const showTech = (html) => !isExecutive ? html : '';
+
       container.innerHTML = `
         <div class='card'>
           <h3>${esc(project.name)} <button class='btn icon' onclick='refreshSelectedProject()' title='Refresh this project'>↻</button></h3>
@@ -251,6 +266,15 @@
           <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
           ${idleFault}
         </div>
+        ${showExec(`
+        <div class='card'>
+          <h3>Executive Summary</h3>
+          <div class='text'>Health: ${esc(project.health)} | Value Score: ${esc(project.valueScore)} | Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current || 'n/a')}</div>
+          <div class='text'>Lifecycle failures: ${esc(project.lifecycle?.fail || 0)} | Blocking reasons: ${esc((project.blockReasons || []).length)}</div>
+          <div class='text'>AI last task: ${esc(project.prompt?.lastStage || 'n/a')} in ${esc(humanDuration(aiLastDurationMs))}</div>
+          <div class='text'>Current campaign: cycle ${esc(project.campaign?.cycle || 0)} | phase ${esc(project.campaign?.phase || 'n/a')}</div>
+        </div>
+        `)}
         <div class='card'>
           <h3>Recovery Command</h3>
           <div class='text mono' id='recover-cmd'>${recovery}</div>
@@ -260,6 +284,7 @@
           <h3>Running Process</h3>
           <div class='text mono'>${runningText}</div>
         </div>
+        ${showTech(`
         <div class='card'>
           <h3>Latest Prompt To Agent</h3>
           <div class='text'><b>Stage:</b> ${esc(project.prompt?.lastStage || 'n/a')} | <b>ok:</b> ${project.prompt?.lastOk ? 'true' : 'false'}</div>
@@ -277,6 +302,7 @@
             <div class='text mono'>${latestOutputFull}</div>
           </details>
         </div>
+        `)}
         <div class='card'>
           <h3>Recent AI Attempts</h3>
           <ul class='text'>${recentPromptRuns || '<li>no entries</li>'}</ul>
@@ -295,6 +321,7 @@
           <h3>Lifecycle Failures</h3>
           <ul class='text'>${fails || '<li>none</li>'}</ul>
         </div>
+        ${showTech(`
         <div class='card'>
           <h3>Orchestration Journal</h3>
           <ul class='text'>${journal || '<li>no entries</li>'}</ul>
@@ -324,8 +351,25 @@
           <div class='text'>Entries: ${esc(lifeTrackPayload.count || 0)} | Summary: <span class='mono'>${esc(life.summaryPath || 'n/a')}</span></div>
           <ul class='text'>${lifeRows || '<li>no life rounds yet</li>'}</ul>
         </div>
+        `)}
       `;
     }
+
+    function updateViewButtons() {
+      const execBtn = document.getElementById('view-exec');
+      const techBtn = document.getElementById('view-tech');
+      if (!execBtn || !techBtn) return;
+      execBtn.classList.toggle('active', state.viewMode === 'executive');
+      techBtn.classList.toggle('active', state.viewMode === 'technical');
+    }
+
+    window.setViewMode = (mode) => {
+      state.viewMode = mode === 'technical' ? 'technical' : 'executive';
+      updateViewButtons();
+      if (!state.snapshot) return;
+      const selectedProject = state.snapshot.projects.find((p) => p.name === state.selected) || null;
+      renderDetail(selectedProject);
+    };
 
     window.selectStage = (stageName) => {
       if (!state.snapshot) return;
@@ -392,6 +436,7 @@
 
     function render(snapshot) {
       state.snapshot = snapshot;
+      updateViewButtons();
       if (!state.selected && snapshot.projects.length > 0) {
         state.selected = snapshot.projects[0].name;
       }
