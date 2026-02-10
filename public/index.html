@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SDD Tool Monitor</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #141f35;
+      --ink: #eef2ff;
+      --muted: #9fb0d5;
+      --healthy: #27c98d;
+      --critical: #ff6b6b;
+      --progress: #f9c74f;
+      --line: #25355a;
+      --accent: #5ac8fa;
+    }
+    body { margin: 0; font-family: "Segoe UI", "SF Pro Text", system-ui, sans-serif; background: radial-gradient(circle at 20% 20%, #132445, var(--bg)); color: var(--ink); }
+    .wrap { max-width: 1400px; margin: 20px auto; padding: 0 14px 28px; }
+    .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 14px; }
+    .title { font-size: 24px; font-weight: 700; letter-spacing: 0.2px; }
+    .sub { color: var(--muted); font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 8px; margin: 12px 0 14px; }
+    .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+    .kpi .k { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+    .kpi .v { font-size: 23px; font-weight: 700; }
+    .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+    .pane { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 8px 7px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; text-align: left; background: rgba(255,255,255,0.02); }
+    tr:hover { background: rgba(255,255,255,0.02); cursor: pointer; }
+    tr.active { background: rgba(90,200,250,0.13); }
+    .tag { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+    .healthy { background: rgba(39,201,141,0.18); color: var(--healthy); }
+    .critical { background: rgba(255,107,107,0.18); color: var(--critical); }
+    .in_progress { background: rgba(249,199,79,0.18); color: var(--progress); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .muted { color: var(--muted); }
+    .detail { padding: 10px; }
+    .card { border: 1px solid var(--line); border-radius: 8px; padding: 9px; margin-bottom: 8px; background: rgba(255,255,255,0.02); }
+    .card h3 { margin: 0 0 7px; font-size: 12px; color: var(--accent); letter-spacing: 0.2px; }
+    .text { font-size: 12px; line-height: 1.35; white-space: pre-wrap; }
+    .btn { background: #1d3359; color: var(--ink); border: 1px solid #2b4b80; border-radius: 7px; padding: 6px 8px; font-size: 11px; cursor: pointer; }
+    .btn:hover { background: #24447a; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <div class="title">SDD Tool Monitor</div>
+        <div id="workspace" class="sub">Loading workspace...</div>
+      </div>
+      <div id="updated" class="sub">waiting updates...</div>
+    </div>
+
+    <div class="grid">
+      <div class="kpi"><div class="k">Projects</div><div id="k-total" class="v">0</div></div>
+      <div class="kpi"><div class="k">Healthy</div><div id="k-healthy" class="v">0</div></div>
+      <div class="kpi"><div class="k">Critical</div><div id="k-critical" class="v">0</div></div>
+      <div class="kpi"><div class="k">Running Campaigns</div><div id="k-campaigns" class="v">0</div></div>
+      <div class="kpi"><div class="k">Running Processes</div><div id="k-running" class="v">0</div></div>
+      <div class="kpi"><div class="k">Blocked Projects</div><div id="k-blocked" class="v">0</div></div>
+      <div class="kpi"><div class="k">Avg Value Score</div><div id="k-value" class="v">0</div></div>
+    </div>
+
+    <div class="layout">
+      <div class="pane">
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Health</th>
+              <th>Value</th>
+              <th>Stage</th>
+              <th>Lifecycle</th>
+              <th>Running</th>
+              <th>Campaign</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="pane">
+        <div class="detail" id="detail">
+          <div class="muted">Select a project to inspect details.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const state = { snapshot: null, selected: null };
+    const setText = (id, value) => { document.getElementById(id).textContent = value; };
+
+    function esc(value) {
+      return String(value || '').replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+    }
+
+    function renderDetail(project) {
+      const container = document.getElementById('detail');
+      if (!project) {
+        container.innerHTML = `<div class='muted'>Select a project to inspect details.</div>`;
+        return;
+      }
+      const recovery = esc(project.recovery || '');
+      const latestPrompt = esc(project.prompt?.lastPromptPreview || 'n/a');
+      const latestOutput = esc(project.prompt?.lastOutputPreview || 'n/a');
+      const latestPromptFull = esc(project.prompt?.lastPromptFull || 'n/a');
+      const latestOutputFull = esc(project.prompt?.lastOutputFull || 'n/a');
+      const blockers = (project.runStatus?.blockers || []);
+      const runningText = project.running?.active
+        ? `PID ${project.running.processId}\n${esc(project.running.command)}`
+        : 'No running sdd-tool process for this project right now.';
+      const fails = (project.lifecycle?.failItems || []).slice(-5).map((x) => `<li>${esc(x)}</li>`).join('');
+      const journal = (project.journal || []).slice(-5).map((row) => `<li>${esc(row.at || '')} - ${esc(row.event || '')} ${esc(row.details || '')}</li>`).join('');
+
+      container.innerHTML = `
+        <div class='card'>
+          <h3>${esc(project.name)}</h3>
+          <div class='text'>Root: ${esc(project.projectRoot)}</div>
+          <div class='text'>Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current)} | Step: ${esc(project.runStatus?.step || 'n/a')} | Value score: ${esc(project.valueScore)}</div>
+        </div>
+        <div class='card'>
+          <h3>Recovery Command</h3>
+          <div class='text mono' id='recover-cmd'>${recovery}</div>
+          <button class='btn' onclick='copyRecovery()'>Copy Command</button>
+        </div>
+        <div class='card'>
+          <h3>Running Process</h3>
+          <div class='text mono'>${runningText}</div>
+        </div>
+        <div class='card'>
+          <h3>Latest Prompt To Agent</h3>
+          <div class='text'><b>Stage:</b> ${esc(project.prompt?.lastStage || 'n/a')} | <b>ok:</b> ${project.prompt?.lastOk ? 'true' : 'false'}</div>
+          <div class='text'>${latestPrompt}</div>
+          <details>
+            <summary class='text muted'>Show full prompt payload</summary>
+            <div class='text mono'>${latestPromptFull}</div>
+          </details>
+        </div>
+        <div class='card'>
+          <h3>Latest Agent Output (Preview)</h3>
+          <div class='text'>${latestOutput}</div>
+          <details>
+            <summary class='text muted'>Show full output payload</summary>
+            <div class='text mono'>${latestOutputFull}</div>
+          </details>
+        </div>
+        <div class='card'>
+          <h3>Blocking Issues</h3>
+          <ul class='text'>${blockers.slice(0, 8).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>none</li>'}</ul>
+        </div>
+        <div class='card'>
+          <h3>Lifecycle Failures</h3>
+          <ul class='text'>${fails || '<li>none</li>'}</ul>
+        </div>
+        <div class='card'>
+          <h3>Orchestration Journal</h3>
+          <ul class='text'>${journal || '<li>no entries</li>'}</ul>
+        </div>
+      `;
+    }
+
+    window.copyRecovery = () => {
+      const text = document.getElementById('recover-cmd')?.textContent || '';
+      navigator.clipboard.writeText(text).catch(() => {});
+    };
+
+    function render(snapshot) {
+      state.snapshot = snapshot;
+      if (!state.selected && snapshot.projects.length > 0) {
+        state.selected = snapshot.projects[0].name;
+      }
+
+      setText('workspace', `Workspace: ${snapshot.workspaceRoot}`);
+      setText('updated', `Updated: ${new Date(snapshot.at).toLocaleString()}`);
+      setText('k-total', String(snapshot.summary.total));
+      setText('k-healthy', String(snapshot.summary.healthy));
+      setText('k-critical', String(snapshot.summary.critical));
+      setText('k-campaigns', String(snapshot.summary.runningCampaigns));
+      setText('k-running', String(snapshot.summary.runningProcesses));
+      setText('k-blocked', String(snapshot.summary.blockedProjects || 0));
+      setText('k-value', String(snapshot.summary.avgValueScore));
+
+      const rows = document.getElementById('rows');
+      rows.innerHTML = '';
+
+      for (const p of snapshot.projects) {
+        const tr = document.createElement('tr');
+        if (p.name === state.selected) tr.classList.add('active');
+        tr.onclick = () => { state.selected = p.name; render(state.snapshot); };
+        const campaignText = p.campaign.present ? `cycle ${p.campaign.cycle} | ${p.campaign.elapsedMinutes}m` : 'idle';
+        const lifecycleText = p.lifecycle.present ? `OK:${p.lifecycle.ok} FAIL:${p.lifecycle.fail}` : 'missing';
+        const runningText = p.running?.active ? `PID ${p.running.processId}` : 'idle';
+        const stageText = p.runStatus?.stageCurrent || p.stage.current;
+        tr.innerHTML = `
+          <td class='mono'>${esc(p.name)}</td>
+          <td><span class='tag ${p.health}'>${esc(p.health)}</span></td>
+          <td>${esc(p.valueScore)}</td>
+          <td class='mono'>${esc(stageText)}</td>
+          <td>${esc(lifecycleText)}</td>
+          <td class='mono'>${esc(runningText)}</td>
+          <td>${esc(campaignText)}</td>
+        `;
+        rows.appendChild(tr);
+      }
+
+      const selectedProject = snapshot.projects.find((p) => p.name === state.selected) || null;
+      renderDetail(selectedProject);
+    }
+
+    async function bootstrap() {
+      const first = await fetch('/api/status').then((r) => r.json());
+      render(first);
+      const stream = new EventSource('/api/stream');
+      stream.addEventListener('snapshot', (event) => {
+        const payload = JSON.parse(event.data);
+        render(payload);
+      });
+    }
+
+    bootstrap().catch((e) => {
+      setText('workspace', `Failed to load monitor: ${e.message}`);
+    });
+  </script>
+</body>
+</html>
