@@ -28,6 +28,19 @@ function sanitizePrompt(input) {
   return raw.replace(/^hello\s+/i, "").trim();
 }
 
+function commandMentionsProject(command, projectName) {
+  const normalized = String(command || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const target = String(projectName || "").trim().toLowerCase();
+  if (!normalized || !target) return false;
+  if (normalized.includes(`--project "${target}"`) || normalized.includes(`--project '${target}'`)) {
+    return true;
+  }
+  if (normalized.includes(`--project ${target}`)) {
+    return true;
+  }
+  return normalized.includes(target);
+}
+
 function listSuiteProcesses(projectName) {
   const token = String(projectName || "").toLowerCase();
   if (!token) return [];
@@ -63,7 +76,7 @@ function listSuiteProcesses(projectName) {
             row.pid > 0 &&
             row.command.toLowerCase().includes("dist/cli.js") &&
             row.command.toLowerCase().includes(" suite ") &&
-            row.command.toLowerCase().includes(token)
+            commandMentionsProject(row.command, token)
         );
     }
     const raw = execSync("ps -ax -o pid= -o command=", {
@@ -89,7 +102,7 @@ function listSuiteProcesses(projectName) {
           row.pid > 0 &&
           row.command.toLowerCase().includes("dist/cli.js") &&
           row.command.toLowerCase().includes(" suite ") &&
-          row.command.toLowerCase().includes(token)
+          commandMentionsProject(row.command, token)
       );
   } catch {
     return [];

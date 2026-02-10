@@ -277,16 +277,40 @@ function listSddProcesses() {
   }
 }
 
+function commandMentionsProject(command, projectName) {
+  const normalized = String(command || "").replace(/\s+/g, " ").trim().toLowerCase();
+  const target = String(projectName || "").trim().toLowerCase();
+  if (!normalized || !target) return false;
+  if (normalized.includes(`--project "${target}"`) || normalized.includes(`--project '${target}'`)) {
+    return true;
+  }
+  if (normalized.includes(`--project ${target}`)) {
+    return true;
+  }
+  return normalized.includes(target);
+}
+
 function detectRunningProcess(projectName, processRows) {
-  const targetPrefix = projectName.slice(0, 40).toLowerCase();
   const hit = processRows.find((row) => {
     const normalized = String(row.command || "").replace(/\s+/g, " ").trim().toLowerCase();
-    return normalized.includes(projectName.toLowerCase()) || normalized.includes(targetPrefix);
+    if (!/(\s|^)suite(\s|$)/.test(normalized)) return false;
+    return commandMentionsProject(normalized, projectName);
   });
   if (!hit) {
     return { active: false, processId: 0, command: "" };
   }
   return { active: true, processId: hit.processId, command: hit.command.slice(0, 400) };
+}
+
+function isProcessAlive(pid) {
+  const value = Number(pid || 0);
+  if (!Number.isFinite(value) || value <= 0) return false;
+  try {
+    process.kill(value, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseReleases(projectRoot) {
@@ -547,16 +571,17 @@ function buildProjectRow(projectRoot, name, processRows) {
   const iterationMetrics = parseIterationMetrics(projectRoot);
   const life = parseLifeArtifacts(projectRoot);
   const running = detectRunningProcess(name, processRows);
-  if (!running.active && campaign.present && campaign.running) {
+  if (!running.active && campaign.present && campaign.running && isProcessAlive(campaign.suitePid)) {
     running.active = true;
     running.processId = Number.isFinite(campaign.suitePid) ? campaign.suitePid : 0;
     running.command = campaign.phase ? `suite ${campaign.phase}` : "suite campaign running";
   }
-  if (!running.active && campaign.present && campaign.running !== false && !campaign.targetPassed && campaign.updatedAt) {
+  if (!running.active && campaign.present && campaign.running !== false && !campaign.targetPassed && campaign.updatedAt && isProcessAlive(campaign.suitePid)) {
     const updatedMs = Date.parse(campaign.updatedAt);
     if (Number.isFinite(updatedMs) && Date.now() - updatedMs <= 180000) {
       running.active = true;
       running.command = "inferred from fresh campaign state";
+      running.processId = Number(campaign.suitePid || 0);
     }
   }
   if (!running.active && runStatus.present && (!campaign.present || campaign.running !== false)) {
