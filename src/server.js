@@ -279,12 +279,12 @@ export async function startMonitorServer(options) {
     }
     actionInFlight.set(actionKey, now);
     try {
-      const detail = await getProjectDetail(req.params.name, workspaceRoot);
-      if (!detail.project) {
+      const snapshot = await loadSnapshot(false);
+      const project = Array.isArray(snapshot?.projects) ? snapshot.projects.find((item) => item?.name === req.params.name) : null;
+      if (!project) {
         res.status(404).json({ ok: false, error: "project_not_found", project: req.params.name });
         return;
       }
-      const project = detail.project;
       const active = listSuiteProcesses(project.name);
       const campaignPid = Number(project?.campaign?.suitePid || 0);
       if (active.length === 0 && isProcessAlive(campaignPid)) {
