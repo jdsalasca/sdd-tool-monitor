@@ -41,6 +41,8 @@
     .healthy { background: rgba(39,201,141,0.18); color: var(--healthy); }
     .critical { background: rgba(255,107,107,0.18); color: var(--critical); }
     .in_progress { background: rgba(249,199,79,0.18); color: var(--progress); }
+    .degraded { background: rgba(249,199,79,0.18); color: var(--progress); }
+    .blocked { background: rgba(255,107,107,0.18); color: var(--critical); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .muted { color: var(--muted); }
     .detail { padding: 10px; overflow-y: auto; max-height: 72vh; }
@@ -191,6 +193,7 @@
       const latestPromptFull = esc(project.prompt?.lastPromptFull || 'n/a');
       const latestOutputFull = esc(project.prompt?.lastOutputFull || 'n/a');
       const blockers = (project.runStatus?.blockers || []);
+      const providerSignal = project.providerSignal || { state: 'healthy', summary: 'n/a', recentFailureCount: 0, blockingReason: '' };
       const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
       const model = esc(project.runStatus?.raw?.model || 'n/a');
       const heartbeat = Number(project.activity?.freshnessMinutes ?? 9999);
@@ -210,6 +213,9 @@
       }).join('');
       const qualityTrend = project.iterationMetrics || {};
       const qualityTrendText = `total=${qualityTrend.total || 0} passed=${qualityTrend.passed || 0} failed=${qualityTrend.failed || 0} lastRound=${qualityTrend.lastRound || 0} ${esc(qualityTrend.lastPhase || '')}:${esc(qualityTrend.lastResult || '')}`;
+      const stageResults = (project.stageResults || []).map((row) =>
+        `<li>${esc(row.stage)} | ${esc(row.status)} | artifacts ${esc(row.artifactsPresent)}/${esc(row.artifactsTotal)}</li>`
+      ).join('');
       const suite = project.campaign || {};
       const runningText = project.running?.active
         ? `PID ${project.running.processId || suite.suitePid || 0}\n${esc(project.running.command)}`
@@ -264,6 +270,8 @@
           <div class='text'>AI timing: last=${esc(humanDuration(aiLastDurationMs))} | avg(6)=${esc(humanDuration(aiAvgDurationMs))} | max(6)=${esc(humanDuration(aiMaxDurationMs))} | last event ${esc(aiAgeMinutes ?? 'n/a')}m ago</div>
           <div class='text'>Suite: running=${suite.running ? 'true' : 'false'} | pid=${esc(suite.suitePid || 0)} | phase=${esc(suite.phase || 'n/a')} | target=${esc(suite.targetStage || 'n/a')} | stalls=${esc(suite.stallCount || 0)}</div>
           <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
+          <div class='text'>Delivery signal: <span class='tag ${esc(providerSignal.state)}'>${esc(providerSignal.state)}</span> | ${esc(providerSignal.summary || '')}</div>
+          <div class='text'>Provider failures (recent): ${esc(providerSignal.recentFailureCount || 0)}${providerSignal.blockingReason ? ` | reason: ${esc(providerSignal.blockingReason)}` : ''}</div>
           ${idleFault}
         </div>
         ${showExec(`
@@ -271,6 +279,7 @@
           <h3>Executive Summary</h3>
           <div class='text'>Health: ${esc(project.health)} | Value Score: ${esc(project.valueScore)} | Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current || 'n/a')}</div>
           <div class='text'>Lifecycle failures: ${esc(project.lifecycle?.fail || 0)} | Blocking reasons: ${esc((project.blockReasons || []).length)}</div>
+          <div class='text'>Provider delivery: ${esc(providerSignal.state)} | ${esc(providerSignal.summary || '')}</div>
           <div class='text'>AI last task: ${esc(project.prompt?.lastStage || 'n/a')} in ${esc(humanDuration(aiLastDurationMs))}</div>
           <div class='text'>Current campaign: cycle ${esc(project.campaign?.cycle || 0)} | phase ${esc(project.campaign?.phase || 'n/a')}</div>
         </div>
@@ -316,6 +325,10 @@
           <ul class='text'>${blockers.slice(0, 8).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>none</li>'}</ul>
           <div class='text'>Detected by monitor:</div>
           <ul class='text'>${blockReasons || '<li>none</li>'}</ul>
+        </div>
+        <div class='card'>
+          <h3>Stage Results</h3>
+          <ul class='text'>${stageResults || '<li>no stage results yet</li>'}</ul>
         </div>
         <div class='card'>
           <h3>Lifecycle Failures</h3>
@@ -464,6 +477,7 @@
         const campaignText = p.campaign.present
           ? `cycle ${p.campaign.cycle} | ${p.campaign.elapsedMinutes}m | ${p.campaign.phase || 'n/a'}`
           : 'idle';
+        const deliveryState = p.providerSignal?.state || 'healthy';
         const lifecycleText = p.lifecycle.present ? `OK:${p.lifecycle.ok} FAIL:${p.lifecycle.fail}` : 'missing';
         const runningPid = p.running?.processId || p.campaign?.suitePid || 0;
         const runningText = p.running?.active ? `PID ${runningPid}` : 'idle';
@@ -478,7 +492,7 @@
           <td class='mono'>${esc(stageText)}<br><span class='muted'>${esc(p.stageProgress?.percent || 0)}%</span></td>
           <td>${esc(lifecycleText)}</td>
           <td class='mono'>${esc(runningText)}<br><span class='muted'>hb ${esc(heartbeat)}m${stale ? ' stalled' : ''} | ai ${esc(humanDuration(aiLast))}</span></td>
-          <td>${esc(campaignText)}</td>
+          <td><span class='tag ${esc(deliveryState)}'>${esc(deliveryState)}</span><br><span class='muted'>${esc(campaignText)}</span></td>
           <td><button class='btn icon' onclick='event.stopPropagation();refreshProjectByName("${esc(p.name)}")' title='Refresh project'>↻</button></td>
         `;
         rows.appendChild(tr);

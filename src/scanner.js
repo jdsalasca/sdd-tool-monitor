@@ -220,6 +220,8 @@ function parsePromptMeta(projectRoot) {
   const avg = durations.length > 0 ? Math.round(sum / durations.length) : 0;
   const max = durations.length > 0 ? Math.max(...durations) : 0;
   const lastDurationMs = Number(last.durationMs || 0);
+  const recentFailures = rows.filter((row) => !row?.ok);
+  const lastFailure = recentFailures.at(-1) || null;
   return {
     present: true,
     lastAt: String(last.at || ""),
@@ -230,9 +232,60 @@ function parsePromptMeta(projectRoot) {
     recentMaxDurationMs: max,
     lastPromptPreview: String(last.promptPreview || ""),
     lastOutputPreview: String(last.outputPreview || ""),
+    lastError: String(last.error || ""),
+    lastFailureAt: String(lastFailure?.at || ""),
+    recentFailureCount: recentFailures.length,
     lastPromptFull: typeof lastFull?.prompt === "string" ? lastFull.prompt.slice(0, 3000) : "",
     lastOutputFull: typeof lastFull?.output === "string" ? lastFull.output.slice(0, 3000) : "",
     recent: rows.slice(-6)
+  };
+}
+
+function parseCampaignJournal(projectRoot) {
+  const file = path.join(projectRoot, "suite-campaign-journal.jsonl");
+  return readJsonlTail(file, 40);
+}
+
+function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
+  const recent = Array.isArray(prompt?.recent) ? prompt.recent : [];
+  const recentFailures = recent.filter((row) => row && row.ok === false);
+  const lastFailure = recentFailures.at(-1);
+  const outputPreview = String(prompt?.lastOutputPreview || "").toLowerCase();
+  const lastErrorText = String(lastFailure?.error || prompt?.lastError || campaign?.lastError || "").toLowerCase();
+  const nonDelivery =
+    outputPreview.includes("ready for your command") ||
+    outputPreview.trim() === "" ||
+    lastErrorText.includes("empty output");
+  const providerBlocked = /provider_backoff|provider_blocked|provider_quota_recovery/i.test(String(campaign?.phase || ""));
+  const quotaLike = /quota|capacity|429|terminalquotaerror/i.test(lastErrorText);
+  const journalBlocked = (campaignJournal || []).some((row) => /campaign\.provider\.blocked/i.test(String(row?.event || "")));
+
+  let state = "healthy";
+  let summary = "Provider delivering responses.";
+  if (providerBlocked || journalBlocked || quotaLike) {
+    state = "blocked";
+    summary = "Provider delivery blocked (quota/capacity or hard failure).";
+  } else if (nonDelivery || recentFailures.length >= 2) {
+    state = "degraded";
+    summary = "Provider is responding but not delivering usable payloads consistently.";
+  }
+
+  const blockingReason =
+    state === "blocked" ? String(campaign?.lastError || lastFailure?.error || "provider delivery blocked") : "";
+  const recentFailuresCompact = recentFailures.slice(-4).map((row) => ({
+    at: String(row.at || ""),
+    stage: String(row.stage || ""),
+    error: String(row.error || "")
+  }));
+
+  return {
+    state,
+    summary,
+    nonDelivery,
+    recentFailureCount: recentFailures.length,
+    blockingReason,
+    recentFailures: recentFailuresCompact,
+    lastFailureAt: String(lastFailure?.at || "")
   };
 }
 
@@ -521,6 +574,21 @@ function parseStageProducts(projectRoot, releases) {
   return catalog;
 }
 
+function buildStageResults(stage, stageProducts) {
+  return STAGE_ORDER.map((name) => {
+    const status = String(stage?.stages?.[name] || "pending");
+    const products = Array.isArray(stageProducts?.[name]) ? stageProducts[name] : [];
+    const present = products.filter((item) => item?.present).length;
+    const total = products.length;
+    return {
+      stage: name,
+      status,
+      artifactsPresent: present,
+      artifactsTotal: total
+    };
+  });
+}
+
 function isoToMs(value) {
   const parsed = Date.parse(String(value || ""));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -570,6 +638,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const releases = parseReleases(projectRoot);
   const iterationMetrics = parseIterationMetrics(projectRoot);
   const life = parseLifeArtifacts(projectRoot);
+  const campaignJournal = parseCampaignJournal(projectRoot);
   const running = detectRunningProcess(name, processRows);
   if (!running.active && campaign.present && campaign.running && isProcessAlive(campaign.suitePid)) {
     running.active = true;
@@ -594,6 +663,9 @@ function buildProjectRow(projectRoot, name, processRows) {
   const idleBeforeMinimum = detectIdleBeforeMinimum(campaign, running);
   const valueScore = computeValueScore(stage, lifecycle, review, releases);
   const recovery = suggestRecoveryCommand(name, stage, lifecycle);
+  const stageProducts = parseStageProducts(projectRoot, releases);
+  const stageResults = buildStageResults(stage, stageProducts);
+  const providerSignal = parseProviderSignal({ campaign, prompt, runStatus, campaignJournal });
   const stageTimeline = Array.isArray(stage.history)
     ? stage.history.slice(-10).map((row) => ({
         at: String(row?.at || ""),
@@ -613,6 +685,8 @@ function buildProjectRow(projectRoot, name, processRows) {
   if (activity.stalled) blockReasons.push(`stalled-no-heartbeat-${activity.freshnessMinutes}m`);
   if ((runStatus.blockers || []).length > 0) blockReasons.push("run-status-blockers");
   if (lifecycle.fail > 0) blockReasons.push("lifecycle-failures");
+  if (providerSignal.state === "blocked") blockReasons.push("provider-delivery-blocked");
+  if (providerSignal.state === "degraded") blockReasons.push("provider-delivery-degraded");
 
   return {
     name,
@@ -628,7 +702,9 @@ function buildProjectRow(projectRoot, name, processRows) {
     releases,
     iterationMetrics,
     life,
-    stageProducts: parseStageProducts(projectRoot, releases),
+    stageProducts,
+    stageResults,
+    providerSignal,
     running,
     activity,
     blocked,
@@ -638,6 +714,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     valueScore,
     recovery: runStatus.recovery?.command || recovery,
     journal: parseOrchestrationJournal(projectRoot),
+    campaignJournal: campaignJournal.slice(-10),
     updatedAt: fs.statSync(projectRoot).mtime.toISOString()
   };
 }
