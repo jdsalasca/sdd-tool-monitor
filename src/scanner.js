@@ -225,9 +225,25 @@ function parsePromptMeta(projectRoot) {
 function listSddProcesses() {
   try {
     if (process.platform === "win32") {
-      // Windows process introspection via CIM can hang on some hosts and block monitor responses.
-      // Keep API responsive and infer active runs from run-status/campaign freshness instead.
-      return [];
+      const cmd = "wmic process where \"name='node.exe'\" get ProcessId,CommandLine /format:csv";
+      const raw = execSync(cmd, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"], timeout: 4000 }).trim();
+      if (!raw) return [];
+      const rows = raw
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(1)
+        .map((line) => {
+          const pieces = line.split(",");
+          if (pieces.length < 3) return null;
+          const processId = Number(pieces.at(-1) || 0);
+          const command = pieces.slice(1, -1).join(",").trim();
+          return { processId, command };
+        })
+        .filter((row) => row && Number.isFinite(row.processId) && row.processId > 0 && /dist[\\/]cli\.js/i.test(row.command));
+      return rows
+        .map((row) => ({ processId: row.processId, command: row.command }))
+        .filter((row) => row.command);
     }
     const raw = execSync("ps -ax -o pid= -o command=", { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] });
     return raw
