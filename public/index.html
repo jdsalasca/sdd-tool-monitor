@@ -40,6 +40,7 @@
     .tag { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
     .healthy { background: rgba(39,201,141,0.18); color: var(--healthy); }
     .critical { background: rgba(255,107,107,0.18); color: var(--critical); }
+    .dormant { background: rgba(159,176,213,0.18); color: #c3d2f3; }
     .in_progress { background: rgba(249,199,79,0.18); color: var(--progress); }
     .degraded { background: rgba(249,199,79,0.18); color: var(--progress); }
     .blocked { background: rgba(255,107,107,0.18); color: var(--critical); }
@@ -93,6 +94,7 @@
         <div class="title">SDD Tool Monitor</div>
         <div id="workspace" class="sub">Loading workspace...</div>
         <div id="refresh-info" class="sub">Refresh: detecting...</div>
+        <div class="sub">`critical` = active project blocked/stalled/failing gates; `dormant` = older non-active project still needing attention.</div>
         <div id="action-status" class="sub"></div>
       </div>
       <div class="top-right">
@@ -145,7 +147,7 @@
   </div>
 
   <script>
-    const state = { snapshot: null, selected: null, viewMode: 'executive' };
+    const state = { snapshot: null, selected: null, viewMode: 'executive', actionBusy: false };
     const stageOrder = ['discovery','functional_requirements','technical_backlog','implementation','quality_validation','role_review','release_candidate','final_release','runtime_start'];
     const setText = (id, value) => { document.getElementById(id).textContent = value; };
 
@@ -194,6 +196,7 @@
       const latestOutputFull = esc(project.prompt?.lastOutputFull || 'n/a');
       const blockers = (project.runStatus?.blockers || []);
       const topBlockers = Array.isArray(project.topBlockers) ? project.topBlockers : [];
+      const lastEvent = project.lastEvent || { at: '', source: '', summary: '' };
       const providerSignal = project.providerSignal || { state: 'healthy', summary: 'n/a', recentFailureCount: 0, blockingReason: '' };
       const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
       const model = esc(project.runStatus?.raw?.model || 'n/a');
@@ -268,6 +271,7 @@
             <button class='btn pause' onclick='projectAction("pause")'>Pause Run</button>
             <button class='btn resume' onclick='projectAction("resume")'>Resume Run</button>
             <button class='btn restart' onclick='projectAction("restart")'>Restart Run</button>
+            <button class='btn' onclick='projectAction("reload")'>Reload Data</button>
           </div>
           <div class='text'>Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current)} | Step: ${esc(project.runStatus?.step || 'n/a')} | Progress: ${esc(project.stageProgress?.completed || 0)}/${esc(project.stageProgress?.total || 9)} (${esc(project.stageProgress?.percent || 0)}%)</div>
           <div class='stage-bar'>${renderStageBar(project)}</div>
@@ -276,6 +280,7 @@
           <div class='text'>AI timing: last=${esc(humanDuration(aiLastDurationMs))} | avg(6)=${esc(humanDuration(aiAvgDurationMs))} | max(6)=${esc(humanDuration(aiMaxDurationMs))} | last event ${esc(aiAgeMinutes ?? 'n/a')}m ago</div>
           <div class='text'>Suite: running=${suite.running ? 'true' : 'false'} | pid=${esc(suite.suitePid || 0)} | phase=${esc(suite.phase || 'n/a')} | target=${esc(suite.targetStage || 'n/a')} | stalls=${esc(suite.stallCount || 0)}</div>
           <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
+          <div class='text'>Last event: ${esc(lastEvent.at || 'n/a')} | ${esc(lastEvent.source || 'n/a')} | ${esc(lastEvent.summary || 'n/a')}</div>
           <div class='text'>Delivery signal: <span class='tag ${esc(providerSignal.state)}'>${esc(providerSignal.state)}</span> | ${esc(providerSignal.summary || '')}</div>
           <div class='text'>Provider failures (recent): ${esc(providerSignal.recentFailureCount || 0)}${providerSignal.blockingReason ? ` | reason: ${esc(providerSignal.blockingReason)}` : ''}</div>
           ${idleFault}
@@ -438,8 +443,10 @@
 
     window.projectAction = async (action) => {
       if (!state.selected) return;
+      if (state.actionBusy) return;
       const statusEl = document.getElementById('action-status');
       try {
+        state.actionBusy = true;
         statusEl.textContent = `Action ${action} on ${state.selected}...`;
         const payload = await fetch(`/api/project/${encodeURIComponent(state.selected)}/action`, {
           method: 'POST',
@@ -454,6 +461,10 @@
         await refreshProject(state.selected);
       } catch (error) {
         statusEl.textContent = `Action failed: ${error.message}`;
+      } finally {
+        setTimeout(() => {
+          state.actionBusy = false;
+        }, 1200);
       }
     };
 

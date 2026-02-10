@@ -434,6 +434,46 @@ function getProjectHealth(stage, lifecycle, review) {
   return "in_progress";
 }
 
+function inferLastEvent({ stageTimeline, campaignJournal, journal, prompt }) {
+  const candidates = [];
+  const stageLast = Array.isArray(stageTimeline) ? stageTimeline.at(-1) : null;
+  if (stageLast?.at) {
+    candidates.push({
+      at: String(stageLast.at),
+      source: "stage",
+      summary: `${String(stageLast.stage || "stage")} -> ${String(stageLast.status || "unknown")}`
+    });
+  }
+  const campaignLast = Array.isArray(campaignJournal) ? campaignJournal.at(-1) : null;
+  if (campaignLast?.at) {
+    candidates.push({
+      at: String(campaignLast.at),
+      source: "campaign",
+      summary: `${String(campaignLast.event || "campaign")}${campaignLast.details ? `: ${String(campaignLast.details).slice(0, 180)}` : ""}`
+    });
+  }
+  const runLast = Array.isArray(journal) ? journal.at(-1) : null;
+  if (runLast?.at) {
+    candidates.push({
+      at: String(runLast.at),
+      source: "orchestration",
+      summary: `${String(runLast.event || "run")}${runLast.details ? `: ${String(runLast.details).slice(0, 180)}` : ""}`
+    });
+  }
+  if (prompt?.lastAt) {
+    candidates.push({
+      at: String(prompt.lastAt),
+      source: "prompt",
+      summary: `prompt ${String(prompt.lastStage || "unknown")} ${prompt.lastOk ? "ok" : "fail"}`
+    });
+  }
+  if (candidates.length === 0) {
+    return { at: "", source: "", summary: "" };
+  }
+  candidates.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+  return candidates.at(-1) || { at: "", source: "", summary: "" };
+}
+
 function suggestRecoveryCommand(projectName, stage, lifecycle) {
   const base = `node dist/cli.js --provider gemini --non-interactive --project "${projectName}" --iterations 10 --max-runtime-minutes 120`;
   const failure = (lifecycle.lastFailure || "").toLowerCase();
@@ -790,7 +830,8 @@ function buildProjectRow(projectRoot, name, processRows) {
     Boolean(activity.stalled) ||
     lifecycle.fail > 0 ||
     (runStatus.blockers || []).length > 0;
-  const health = blocked ? "critical" : getProjectHealth(stage, lifecycle, review);
+  const isActiveWindow = Number(activity.freshnessMinutes || 9999) <= 120 || running.active || campaign.running;
+  const health = blocked ? (isActiveWindow ? "critical" : "dormant") : getProjectHealth(stage, lifecycle, review);
   const blockReasons = [];
   if (idleBeforeMinimum?.failed) blockReasons.push("idle-before-minimum-runtime");
   if (activity.stalled) blockReasons.push(`stalled-no-heartbeat-${activity.freshnessMinutes}m`);
@@ -799,6 +840,8 @@ function buildProjectRow(projectRoot, name, processRows) {
   if (providerSignal.state === "blocked") blockReasons.push("provider-delivery-blocked");
   if (providerSignal.state === "degraded") blockReasons.push("provider-delivery-degraded");
   const topBlockers = buildTopBlockers({ lifecycle, runStatus, providerSignal, blockReasons });
+  const journal = parseOrchestrationJournal(projectRoot);
+  const lastEvent = inferLastEvent({ stageTimeline, campaignJournal, journal, prompt });
 
   return {
     name,
@@ -826,8 +869,9 @@ function buildProjectRow(projectRoot, name, processRows) {
     health,
     valueScore,
     recovery: runStatus.recovery?.command || recovery,
-    journal: parseOrchestrationJournal(projectRoot),
+    journal,
     campaignJournal: campaignJournal.slice(-10),
+    lastEvent,
     updatedAt: fs.statSync(projectRoot).mtime.toISOString()
   };
 }
@@ -897,6 +941,7 @@ export async function scanProjects(explicitWorkspace) {
     idleBeforeMinimum: projects.filter((p) => p.idleBeforeMinimum?.failed).length,
     stalledProjects: projects.filter((p) => p.activity?.stalled).length,
     blockedProjects: projects.filter((p) => p.blocked).length,
+    dormant: projects.filter((p) => p.health === "dormant").length,
     avgValueScore: projects.length === 0 ? 0 : Math.round(projects.reduce((acc, p) => acc + p.valueScore, 0) / projects.length)
   };
 

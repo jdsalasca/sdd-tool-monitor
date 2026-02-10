@@ -202,6 +202,8 @@ export async function startMonitorServer(options) {
   const workspaceRoot = resolveWorkspaceRoot(options.workspace);
   const app = express();
   const subscribers = new Set();
+  const actionInFlight = new Map();
+  const actionCooldownMs = 6000;
 
   app.use(express.json());
   app.use(express.static(path.join(__dirname, "..", "public")));
@@ -231,43 +233,61 @@ export async function startMonitorServer(options) {
 
   app.post("/api/project/:name/action", async (req, res) => {
     const action = String(req.body?.action || "").trim().toLowerCase();
-    const detail = await getProjectDetail(req.params.name, workspaceRoot);
-    if (!detail.project) {
-      res.status(404).json({ ok: false, error: "project_not_found", project: req.params.name });
-      return;
-    }
-    const project = detail.project;
-    const active = listSuiteProcesses(project.name);
-    const campaignPid = Number(project?.campaign?.suitePid || 0);
-    if (active.length === 0 && isProcessAlive(campaignPid)) {
-      active.push({ pid: campaignPid, command: "from_campaign_state" });
-    }
-
-    if (!["pause", "resume", "restart"].includes(action)) {
-      res.status(400).json({ ok: false, error: "invalid_action", details: "Use pause|resume|restart" });
-      return;
-    }
-
-    if (action === "pause") {
-      const stopped = active.filter((row) => stopProcess(row.pid)).map((row) => row.pid);
-      updateCampaignState(project.projectRoot, {
-        running: false,
-        phase: "paused_by_monitor",
-        lastError: stopped.length > 0 ? "" : "No active suite process found to pause."
+    const actionKey = `${req.params.name}:${action}`;
+    const now = Date.now();
+    const inflightAt = Number(actionInFlight.get(actionKey) || 0);
+    if (inflightAt > 0 && now - inflightAt < actionCooldownMs) {
+      res.status(429).json({
+        ok: false,
+        error: "action_cooldown",
+        details: `Action ${action} is already in progress. Retry in ${Math.max(1, Math.ceil((actionCooldownMs - (now - inflightAt)) / 1000))}s.`
       });
-      res.json({ ok: true, action, project: project.name, stoppedPids: stopped });
       return;
     }
-
-    if (action === "restart") {
-      active.forEach((row) => stopProcess(row.pid));
-      updateCampaignState(project.projectRoot, { running: false, phase: "restarting_by_monitor" });
-    } else if (action === "resume" && active.length > 0) {
-      res.json({ ok: true, action, project: project.name, skipped: true, details: "suite already running", pids: active.map((row) => row.pid) });
-      return;
-    }
-
+    actionInFlight.set(actionKey, now);
     try {
+      const detail = await getProjectDetail(req.params.name, workspaceRoot);
+      if (!detail.project) {
+        res.status(404).json({ ok: false, error: "project_not_found", project: req.params.name });
+        return;
+      }
+      const project = detail.project;
+      const active = listSuiteProcesses(project.name);
+      const campaignPid = Number(project?.campaign?.suitePid || 0);
+      if (active.length === 0 && isProcessAlive(campaignPid)) {
+        active.push({ pid: campaignPid, command: "from_campaign_state" });
+      }
+
+      if (!["pause", "resume", "restart", "reload"].includes(action)) {
+        res.status(400).json({ ok: false, error: "invalid_action", details: "Use pause|resume|restart|reload" });
+        return;
+      }
+
+      if (action === "reload") {
+        const refreshed = await getProjectDetail(req.params.name, workspaceRoot);
+        res.json({ ok: true, action, project: req.params.name, detail: refreshed.project || null });
+        return;
+      }
+
+      if (action === "pause") {
+        const stopped = active.filter((row) => stopProcess(row.pid)).map((row) => row.pid);
+        updateCampaignState(project.projectRoot, {
+          running: false,
+          phase: "paused_by_monitor",
+          lastError: stopped.length > 0 ? "" : "No active suite process found to pause."
+        });
+        res.json({ ok: true, action, project: project.name, stoppedPids: stopped });
+        return;
+      }
+
+      if (action === "restart") {
+        active.forEach((row) => stopProcess(row.pid));
+        updateCampaignState(project.projectRoot, { running: false, phase: "restarting_by_monitor" });
+      } else if (action === "resume" && active.length > 0) {
+        res.json({ ok: true, action, project: project.name, skipped: true, details: "suite already running", pids: active.map((row) => row.pid) });
+        return;
+      }
+
       const started = startSuite(project);
       updateCampaignState(project.projectRoot, {
         running: true,
@@ -285,6 +305,10 @@ export async function startMonitorServer(options) {
       });
     } catch (error) {
       res.status(500).json({ ok: false, action, error: "action_failed", details: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setTimeout(() => {
+        actionInFlight.delete(actionKey);
+      }, actionCooldownMs);
     }
   });
 
