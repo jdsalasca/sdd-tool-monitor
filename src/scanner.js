@@ -348,14 +348,14 @@ function buildProjectRow(projectRoot, name, processRows) {
     running.processId = Number.isFinite(campaign.suitePid) ? campaign.suitePid : 0;
     running.command = campaign.phase ? `suite ${campaign.phase}` : "suite campaign running";
   }
-  if (!running.active && campaign.present && !campaign.targetPassed && campaign.updatedAt) {
+  if (!running.active && campaign.present && campaign.running !== false && !campaign.targetPassed && campaign.updatedAt) {
     const updatedMs = Date.parse(campaign.updatedAt);
     if (Number.isFinite(updatedMs) && Date.now() - updatedMs <= 180000) {
       running.active = true;
       running.command = "inferred from fresh campaign state";
     }
   }
-  if (!running.active && runStatus.present) {
+  if (!running.active && runStatus.present && (!campaign.present || campaign.running !== false)) {
     const runUpdatedMs = Date.parse(runStatus.raw?.at || "");
     if (Number.isFinite(runUpdatedMs) && Date.now() - runUpdatedMs <= 180000) {
       running.active = true;
