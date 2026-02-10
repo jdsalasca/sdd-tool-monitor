@@ -8,6 +8,7 @@
     :root {
       --bg: #0b1220;
       --card: #141f35;
+      --card-2: #112038;
       --ink: #eef2ff;
       --muted: #9fb0d5;
       --healthy: #27c98d;
@@ -17,19 +18,22 @@
       --accent: #5ac8fa;
     }
     body { margin: 0; font-family: "Segoe UI", "SF Pro Text", system-ui, sans-serif; background: radial-gradient(circle at 20% 20%, #132445, var(--bg)); color: var(--ink); }
-    .wrap { max-width: 1400px; margin: 20px auto; padding: 0 14px 28px; }
-    .top { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 14px; }
-    .title { font-size: 24px; font-weight: 700; letter-spacing: 0.2px; }
-    .sub { color: var(--muted); font-size: 13px; }
-    .grid { display: grid; grid-template-columns: repeat(9, minmax(110px, 1fr)); gap: 8px; margin: 12px 0 14px; }
-    .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
-    .kpi .k { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
-    .kpi .v { font-size: 23px; font-weight: 700; }
-    .layout { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
-    .pane { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 8px 7px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: top; }
-    th { color: var(--muted); font-weight: 600; text-align: left; background: rgba(255,255,255,0.02); }
+    .wrap { max-width: 1640px; margin: 16px auto; padding: 0 14px 24px; }
+    .top { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 12px; }
+    .title { font-size: 25px; font-weight: 700; letter-spacing: 0.2px; margin-bottom: 2px; }
+    .sub { color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
+    #updated { text-align: right; }
+    #action-status { margin-top: 6px; color: #b9e4ff; }
+    .grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+    .kpi { background: linear-gradient(180deg, var(--card), var(--card-2)); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 68px; }
+    .kpi .k { color: var(--muted); font-size: 11px; margin-bottom: 4px; line-height: 1.1; }
+    .kpi .v { font-size: 21px; font-weight: 700; line-height: 1; }
+    .layout { display: grid; grid-template-columns: minmax(760px, 1.7fr) minmax(420px, 1fr); gap: 10px; }
+    .pane { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-height: 72vh; }
+    .table-wrap { width: 100%; overflow-x: auto; overflow-y: auto; max-height: 72vh; }
+    table { width: 100%; border-collapse: collapse; min-width: 920px; table-layout: fixed; }
+    th, td { padding: 8px 7px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: top; overflow-wrap: anywhere; word-break: break-word; }
+    th { color: var(--muted); font-weight: 600; text-align: left; background: rgba(255,255,255,0.02); position: sticky; top: 0; z-index: 1; }
     tr:hover { background: rgba(255,255,255,0.02); cursor: pointer; }
     tr.active { background: rgba(90,200,250,0.13); }
     .tag { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
@@ -38,19 +42,41 @@
     .in_progress { background: rgba(249,199,79,0.18); color: var(--progress); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .muted { color: var(--muted); }
-    .detail { padding: 10px; }
-    .card { border: 1px solid var(--line); border-radius: 8px; padding: 9px; margin-bottom: 8px; background: rgba(255,255,255,0.02); }
-    .card h3 { margin: 0 0 7px; font-size: 12px; color: var(--accent); letter-spacing: 0.2px; }
-    .text { font-size: 12px; line-height: 1.35; white-space: pre-wrap; }
-    .btn { background: #1d3359; color: var(--ink); border: 1px solid #2b4b80; border-radius: 7px; padding: 6px 8px; font-size: 11px; cursor: pointer; }
+    .detail { padding: 10px; overflow-y: auto; max-height: 72vh; }
+    .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 9px; background: rgba(255,255,255,0.02); }
+    .card h3 { margin: 0 0 7px; font-size: 13px; color: var(--accent); letter-spacing: 0.2px; display: flex; align-items: center; gap: 8px; }
+    .text { font-size: 12px; line-height: 1.38; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .text + .text { margin-top: 4px; }
+    .btn { background: #1d3359; color: var(--ink); border: 1px solid #2b4b80; border-radius: 7px; padding: 6px 9px; font-size: 11px; cursor: pointer; min-height: 28px; }
     .btn:hover { background: #24447a; }
     .btn.icon { padding: 4px 7px; font-size: 13px; line-height: 1; }
+    .btn.pause { border-color: #7f6b1f; background: #3a3316; }
+    .btn.pause:hover { background: #4b421d; }
+    .btn.resume { border-color: #1f7f52; background: #173828; }
+    .btn.resume:hover { background: #1d4a34; }
+    .btn.restart { border-color: #7f2d2d; background: #3b1c1f; }
+    .btn.restart:hover { background: #532328; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
     .select { background: #122444; color: var(--ink); border: 1px solid #2b4b80; border-radius: 7px; padding: 5px 8px; font-size: 12px; }
     .stage-bar { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
     .stage-pill { border-radius: 999px; padding: 3px 6px; font-size: 10px; text-align: center; border: 1px solid var(--line); color: var(--muted); }
     .stage-pill.pass { background: rgba(39,201,141,0.18); color: var(--healthy); border-color: rgba(39,201,141,0.45); }
     .stage-pill.current { background: rgba(249,199,79,0.18); color: var(--progress); border-color: rgba(249,199,79,0.45); }
     .stage-pill.fail { background: rgba(255,107,107,0.18); color: var(--critical); border-color: rgba(255,107,107,0.45); }
+    @media (max-width: 1380px) {
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .layout { grid-template-columns: 1fr; }
+      .pane { min-height: auto; }
+      .table-wrap { max-height: 50vh; }
+      .detail { max-height: none; }
+      #updated { text-align: left; }
+    }
+    @media (max-width: 780px) {
+      .top { flex-direction: column; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      table { min-width: 760px; }
+      .kpi .v { font-size: 18px; }
+    }
   </style>
 </head>
 <body>
@@ -79,21 +105,23 @@
 
     <div class="layout">
       <div class="pane">
-        <table>
-          <thead>
-            <tr>
-              <th>Project</th>
-              <th>Health</th>
-              <th>Value</th>
-              <th>Stage</th>
-              <th>Lifecycle</th>
-              <th>Running</th>
-              <th>Campaign</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="rows"></tbody>
-        </table>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:25%">Project</th>
+                <th style="width:8%">Health</th>
+                <th style="width:7%">Value</th>
+                <th style="width:12%">Stage</th>
+                <th style="width:12%">Lifecycle</th>
+                <th style="width:16%">Running</th>
+                <th style="width:14%">Campaign</th>
+                <th style="width:6%">Refresh</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
       </div>
       <div class="pane">
         <div class="detail" id="detail">
@@ -209,10 +237,10 @@
         <div class='card'>
           <h3>${esc(project.name)} <button class='btn icon' onclick='refreshSelectedProject()' title='Refresh this project'>↻</button></h3>
           <div class='text'>Root: ${esc(project.projectRoot)}</div>
-          <div class='text'>
-            <button class='btn' onclick='projectAction("pause")'>Pause</button>
-            <button class='btn' onclick='projectAction("resume")'>Resume</button>
-            <button class='btn' onclick='projectAction("restart")'>Restart</button>
+          <div class='btn-row'>
+            <button class='btn pause' onclick='projectAction("pause")'>Pause Run</button>
+            <button class='btn resume' onclick='projectAction("resume")'>Resume Run</button>
+            <button class='btn restart' onclick='projectAction("restart")'>Restart Run</button>
           </div>
           <div class='text'>Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current)} | Step: ${esc(project.runStatus?.step || 'n/a')} | Progress: ${esc(project.stageProgress?.completed || 0)}/${esc(project.stageProgress?.total || 9)} (${esc(project.stageProgress?.percent || 0)}%)</div>
           <div class='stage-bar'>${renderStageBar(project)}</div>
