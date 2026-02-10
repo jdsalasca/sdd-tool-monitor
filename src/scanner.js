@@ -131,9 +131,16 @@ function parseStage(projectRoot) {
 }
 
 function parseCampaign(projectRoot) {
-  const state = readJson(path.join(projectRoot, "suite-campaign-state.json"));
+  const file = path.join(projectRoot, "suite-campaign-state.json");
+  const state = readJson(file);
   if (!state) {
     return { present: false, cycle: 0, elapsedMinutes: 0, autonomous: false, targetPassed: false, qualityPassed: false, runtimePassed: false };
+  }
+  let updatedAt = "";
+  try {
+    updatedAt = fs.statSync(file).mtime.toISOString();
+  } catch {
+    updatedAt = "";
   }
   return {
     present: true,
@@ -143,7 +150,8 @@ function parseCampaign(projectRoot) {
     targetPassed: Boolean(state.targetPassed),
     qualityPassed: Boolean(state.qualityPassed),
     runtimePassed: Boolean(state.runtimePassed),
-    targetStage: String(state.targetStage || "")
+    targetStage: String(state.targetStage || ""),
+    updatedAt
   };
 }
 
@@ -184,10 +192,17 @@ function listSddProcesses() {
       const psCommand =
         "Get-CimInstance Win32_Process -Filter \"name='node.exe'\" | " +
         "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
-      const raw = execFileSync("powershell", ["-NoProfile", "-Command", psCommand], {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"]
-      }).trim();
+      const runPs = (bin) => {
+        try {
+          return execFileSync(bin, ["-NoProfile", "-Command", psCommand], {
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"]
+          }).trim();
+        } catch {
+          return "";
+        }
+      };
+      const raw = runPs("pwsh") || runPs("powershell");
       if (!raw) {
         return [];
       }
@@ -216,7 +231,11 @@ function listSddProcesses() {
 }
 
 function detectRunningProcess(projectName, processRows) {
-  const hit = processRows.find((row) => row.command.includes(projectName));
+  const targetPrefix = projectName.slice(0, 40).toLowerCase();
+  const hit = processRows.find((row) => {
+    const normalized = String(row.command || "").replace(/\s+/g, " ").trim().toLowerCase();
+    return normalized.includes(projectName.toLowerCase()) || normalized.includes(targetPrefix);
+  });
   if (!hit) {
     return { active: false, processId: 0, command: "" };
   }
@@ -293,6 +312,13 @@ function buildProjectRow(projectRoot, name, processRows) {
   const releases = parseReleases(projectRoot);
   const health = getProjectHealth(stage, lifecycle, review);
   const running = detectRunningProcess(name, processRows);
+  if (!running.active && campaign.present && !campaign.targetPassed && campaign.updatedAt) {
+    const updatedMs = Date.parse(campaign.updatedAt);
+    if (Number.isFinite(updatedMs) && Date.now() - updatedMs <= 180000) {
+      running.active = true;
+      running.command = "inferred from fresh campaign state";
+    }
+  }
   const valueScore = computeValueScore(stage, lifecycle, review, releases);
   const recovery = suggestRecoveryCommand(name, stage, lifecycle);
 
