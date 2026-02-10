@@ -375,6 +375,11 @@ function parseRecoveryAudit(projectRoot) {
   return readJsonlTail(file, 40);
 }
 
+function parseRecoveryEvents(projectRoot) {
+  const file = path.join(projectRoot, "life", "recovery-events.jsonl");
+  return readJsonlTail(file, 60);
+}
+
 function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
   const recent = Array.isArray(prompt?.recent) ? prompt.recent : [];
   const recentFailures = recent.filter((row) => row && row.ok === false);
@@ -953,6 +958,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const life = parseLifeArtifacts(projectRoot);
   const campaignJournal = parseCampaignJournal(projectRoot);
   const recoveryAudit = parseRecoveryAudit(projectRoot);
+  const recoveryEvents = parseRecoveryEvents(projectRoot);
   const running = detectRunningProcess(name, processRows);
   if (!running.active && campaign.present && campaign.running !== false && !campaign.targetPassed && campaign.updatedAt && isProcessAlive(campaign.suitePid)) {
     const updatedMs = Date.parse(campaign.updatedAt);
@@ -1039,6 +1045,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     recommendedNextAction,
     recoveryState,
     recoveryAudit: recoveryAudit.slice(-10),
+    recoveryEvents: recoveryEvents.slice(-12),
     running,
     activity,
     blocked,

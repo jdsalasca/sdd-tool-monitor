@@ -158,26 +158,12 @@ function startSuite(project) {
 
   const provider = project.runStatus?.raw?.provider || "gemini";
   const model = project.runStatus?.raw?.model || project.campaign?.model || "";
-  const fromStep = project.runStatus?.recovery?.fromStep || project.campaign?.nextFromStep || "finish";
   const hint = sanitizePrompt(project.runStatus?.recovery?.hint || "");
-  const args = ["dist/cli.js", "--provider", provider, "--non-interactive", "--project", project.name, "--iterations", "10"];
+  const args = ["dist/cli.js", "--provider", provider, "--non-interactive", "--project", project.name, "recover"];
   if (model) {
     args.push("--model", model);
   }
-  args.push(
-    "suite",
-    "--campaign-autonomous",
-    "--campaign-hours",
-    "6",
-    "--campaign-max-cycles",
-    "500",
-    "--campaign-sleep-seconds",
-    "5",
-    "--from-step",
-    fromStep,
-    "hello",
-    hint
-  );
+  args.push("--campaign-hours", "6", "--campaign-max-cycles", "500", "--campaign-sleep-seconds", "5", hint);
 
   const child = spawn(process.execPath, args, {
     cwd: sddRoot,

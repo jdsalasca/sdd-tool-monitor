@@ -220,6 +220,7 @@
       };
       const campaignDebug = project.campaignDebug || { present: false, providerIssue: '', recoveryTier: '', rootCauses: [], recommendations: [], recoveryAction: '', cycle: 0, elapsedMinutes: 0, at: '' };
       const autonomousFeedback = project.autonomousFeedback || { present: false, summary: '', rootCauses: [], actions: [] };
+      const recoveryEvents = Array.isArray(project.recoveryEvents) ? project.recoveryEvents : [];
       const recommendedNextAction = project.recommendedNextAction || 'Continue lifecycle to next quality gate';
       const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
       const model = esc(project.runStatus?.raw?.model || 'n/a');
@@ -392,6 +393,10 @@
           <ul class='text'>${(campaignDebug.rootCauses || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>none</li>'}</ul>
           <div class='text'><b>Recommendations:</b></div>
           <ul class='text'>${(campaignDebug.recommendations || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>none</li>'}</ul>
+        </div>
+        <div class='card'>
+          <h3>Recovery Events</h3>
+          <ul class='text'>${recoveryEvents.map((x) => `<li>${esc(x.at || '')} | ${esc(x.event || '')} ${x.details ? `| ${esc(x.details)}` : ''}</li>`).join('') || '<li>no entries</li>'}</ul>
         </div>
         <div class='card'>
           <h3>Autonomous Feedback</h3>
