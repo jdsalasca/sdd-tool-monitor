@@ -179,6 +179,30 @@ function parseCampaign(projectRoot) {
   };
 }
 
+function parseAutonomousFeedback(projectRoot) {
+  const parsed = readJson(path.join(projectRoot, "generated-app", "deploy", "autonomous-feedback-report.json"));
+  if (!parsed) {
+    return {
+      present: false,
+      summary: "",
+      rootCauses: [],
+      actions: []
+    };
+  }
+  return {
+    present: true,
+    summary: String(parsed.summary || ""),
+    rootCauses: Array.isArray(parsed.rootCauses) ? parsed.rootCauses.slice(0, 8).map((v) => String(v)) : [],
+    actions: Array.isArray(parsed.actions)
+      ? parsed.actions.slice(0, 8).map((row) => ({
+          priority: String(row?.priority || ""),
+          title: String(row?.title || ""),
+          rationale: String(row?.rationale || "")
+        }))
+      : []
+  };
+}
+
 function detectIdleBeforeMinimum(campaign, running) {
   if (!campaign?.present) return null;
   const minMinutes = 360;
@@ -921,6 +945,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const prompt = parsePromptMeta(projectRoot);
   const runtimeVisualProbe = parseRuntimeVisualProbe(projectRoot);
   const softwareDiagnostic = parseSoftwareDiagnostic(projectRoot);
+  const autonomousFeedback = parseAutonomousFeedback(projectRoot);
   const campaignDebug = parseCampaignDebugReport(projectRoot);
   const runStatus = parseRunStatus(projectRoot);
   const releases = parseReleases(projectRoot);
@@ -935,6 +960,13 @@ function buildProjectRow(projectRoot, name, processRows) {
       running.active = true;
       running.command = campaign.phase ? `suite ${campaign.phase}` : "inferred from fresh campaign state";
       running.processId = Number(campaign.suitePid || 0);
+    }
+  }
+  const campaignPidAlive = Number(campaign.suitePid || 0) > 0 ? isProcessAlive(Number(campaign.suitePid || 0)) : false;
+  if (campaign.present && campaign.running && !campaignPidAlive && !running.active) {
+    campaign.running = false;
+    if (!campaign.lastError) {
+      campaign.lastError = "campaign state was running=true but suitePid is not alive";
     }
   }
   if (!running.active && runStatus.present && (!campaign.present || campaign.running !== false)) {
@@ -975,6 +1007,10 @@ function buildProjectRow(projectRoot, name, processRows) {
   if (providerSignal.state === "blocked") blockReasons.push("provider-delivery-blocked");
   if (providerSignal.state === "degraded") blockReasons.push("provider-delivery-degraded");
   const topBlockers = buildTopBlockers({ lifecycle, runStatus, providerSignal, blockReasons });
+  const recommendedNextAction =
+    autonomousFeedback.actions?.[0]?.title ||
+    topBlockers?.[0]?.actions?.[0] ||
+    (topBlockers?.[0]?.reason ? `Resolve blocker: ${String(topBlockers[0].reason).slice(0, 120)}` : "Continue lifecycle to next gate");
   const journal = parseOrchestrationJournal(projectRoot);
   const lastEvent = inferLastEvent({ stageTimeline, campaignJournal, journal, prompt });
 
@@ -996,9 +1032,11 @@ function buildProjectRow(projectRoot, name, processRows) {
     stageResults,
     runtimeVisualProbe,
     softwareDiagnostic,
+    autonomousFeedback,
     campaignDebug,
     providerSignal,
     topBlockers,
+    recommendedNextAction,
     recoveryState,
     recoveryAudit: recoveryAudit.slice(-10),
     running,
