@@ -142,6 +142,17 @@
       const productsHtml = selectedProducts.map((item) =>
         `<li>${item.present ? 'OK' : 'MISSING'} | ${esc(item.label || '')} | <span class='mono'>${esc(item.path || '')}</span></li>`
       ).join('');
+      const life = project.life || { tracks: {} };
+      const lifeTracks = Object.keys(life.tracks || {});
+      const lifeOptions = lifeTracks.map((track) => {
+        const selected = (project.__selectedLifeTrack || 'users') === track ? 'selected' : '';
+        return `<option value="${esc(track)}" ${selected}>${esc(track)}</option>`;
+      }).join('');
+      const selectedLifeTrack = project.__selectedLifeTrack || 'users';
+      const lifeTrackPayload = (life.tracks && life.tracks[selectedLifeTrack]) ? life.tracks[selectedLifeTrack] : { recent: [], count: 0 };
+      const lifeRows = (lifeTrackPayload.recent || []).map((row) =>
+        `<li>${esc(row.at || '')} | ${esc(row.stage || '')} | ${esc(row.summary || '')}</li>`
+      ).join('');
 
       container.innerHTML = `
         <div class='card'>
@@ -212,6 +223,17 @@
           </div>
           <ul class='text'>${productsHtml || '<li>no products indexed for this stage</li>'}</ul>
         </div>
+        <div class='card'>
+          <h3>Life Tracks</h3>
+          <div class='text'>
+            <label for='life-track-select'>Track:</label>
+            <select id='life-track-select' class='select' onchange='selectLifeTrack(this.value)'>
+              ${lifeOptions || "<option value='users'>users</option>"}
+            </select>
+          </div>
+          <div class='text'>Entries: ${esc(lifeTrackPayload.count || 0)} | Summary: <span class='mono'>${esc(life.summaryPath || 'n/a')}</span></div>
+          <ul class='text'>${lifeRows || '<li>no life rounds yet</li>'}</ul>
+        </div>
       `;
     }
 
@@ -220,6 +242,14 @@
       const project = state.snapshot.projects.find((p) => p.name === state.selected);
       if (!project) return;
       project.__selectedStage = stageName;
+      renderDetail(project);
+    };
+
+    window.selectLifeTrack = (trackName) => {
+      if (!state.snapshot) return;
+      const project = state.snapshot.projects.find((p) => p.name === state.selected);
+      if (!project) return;
+      project.__selectedLifeTrack = trackName;
       renderDetail(project);
     };
 

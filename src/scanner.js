@@ -332,6 +332,28 @@ function parseIterationMetrics(projectRoot) {
   };
 }
 
+function parseLifeArtifacts(projectRoot) {
+  const lifeRoot = path.join(projectRoot, "life");
+  const tracks = ["users", "stakeholders", "design", "marketing", "quality"];
+  const data = {};
+  for (const track of tracks) {
+    const file = path.join(lifeRoot, `${track}-rounds.jsonl`);
+    const rows = readJsonlTail(file, 25);
+    data[track] = {
+      count: rows.length,
+      last: rows.at(-1) || null,
+      recent: rows.slice(-8)
+    };
+  }
+  const summaryFile = path.join(lifeRoot, "summary.md");
+  return {
+    present: fs.existsSync(lifeRoot),
+    summaryPath: fs.existsSync(summaryFile) ? "life/summary.md" : "",
+    summaryPreview: readText(summaryFile).slice(0, 1200),
+    tracks: data
+  };
+}
+
 function findLatestRequirementDir(projectRoot) {
   const bases = ["backlog", "wip", "in-progress", "done", "archived"].map((status) =>
     path.join(projectRoot, "requirements", status)
@@ -409,7 +431,8 @@ function parseStageProducts(projectRoot, releases) {
     role_review: [
       { label: "Digital review report", path: "generated-app/deploy/digital-review-report.json", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-report.json")) },
       { label: "User stories backlog", path: "generated-app/deploy/digital-review-user-stories.md", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-user-stories.md")) },
-      { label: "Review rounds", path: "generated-app/deploy/digital-review-rounds.jsonl", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-rounds.jsonl")) }
+      { label: "Review rounds", path: "generated-app/deploy/digital-review-rounds.json", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-rounds.json")) },
+      { label: "Life review summary", path: "life/summary.md", present: fs.existsSync(path.join(projectRoot, "life", "summary.md")) }
     ],
     release_candidate: [
       { label: "Release history", path: "generated-app/deploy/release-history.json", present: fs.existsSync(path.join(appRoot, "deploy", "release-history.json")) },
@@ -417,7 +440,8 @@ function parseStageProducts(projectRoot, releases) {
     ],
     final_release: [
       { label: "Final release history", path: "generated-app/deploy/release-history.json", present: releases.finals > 0 },
-      { label: "Deployment report", path: "generated-app/deploy/deployment.md", present: fs.existsSync(path.join(appRoot, "deploy", "deployment.md")) }
+      { label: "Deployment report", path: "generated-app/deploy/deployment.md", present: fs.existsSync(path.join(appRoot, "deploy", "deployment.md")) },
+      { label: "Life summary", path: "life/summary.md", present: fs.existsSync(path.join(projectRoot, "life", "summary.md")) }
     ],
     runtime_start: [
       { label: "Runtime process metadata", path: "generated-app/deploy/runtime-processes.json", present: fs.existsSync(path.join(appRoot, "deploy", "runtime-processes.json")) },
@@ -436,6 +460,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const runStatus = parseRunStatus(projectRoot);
   const releases = parseReleases(projectRoot);
   const iterationMetrics = parseIterationMetrics(projectRoot);
+  const life = parseLifeArtifacts(projectRoot);
   const health = getProjectHealth(stage, lifecycle, review);
   const running = detectRunningProcess(name, processRows);
   if (!running.active && campaign.present && campaign.running) {
@@ -478,6 +503,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     runStatus,
     releases,
     iterationMetrics,
+    life,
     stageProducts: parseStageProducts(projectRoot, releases),
     running,
     health,
