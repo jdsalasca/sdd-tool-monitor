@@ -267,6 +267,28 @@ function parseRuntimeVisualProbe(projectRoot) {
   };
 }
 
+function parseSoftwareDiagnostic(projectRoot) {
+  const parsed = readJson(path.join(projectRoot, "generated-app", "deploy", "software-diagnostic-report.json"));
+  if (!parsed) {
+    return {
+      present: false,
+      summary: "",
+      blockingIssues: [],
+      httpStatus: "",
+      reachableUrl: "",
+      interactionStatus: ""
+    };
+  }
+  return {
+    present: true,
+    summary: String(parsed.summary || ""),
+    blockingIssues: Array.isArray(parsed.blockingIssues) ? parsed.blockingIssues.slice(0, 8).map((v) => String(v)) : [],
+    httpStatus: String(parsed?.http?.status || ""),
+    reachableUrl: String(parsed?.http?.reachableUrl || ""),
+    interactionStatus: String(parsed?.interaction?.status || "")
+  };
+}
+
 function parseCampaignJournal(projectRoot) {
   const file = path.join(projectRoot, "suite-campaign-journal.jsonl");
   return readJsonlTail(file, 40);
@@ -673,6 +695,7 @@ function parseStageProducts(projectRoot, releases) {
     runtime_start: [
       { label: "Runtime process metadata", path: "generated-app/deploy/runtime-processes.json", present: fs.existsSync(path.join(appRoot, "deploy", "runtime-processes.json")) },
       { label: "Runtime visual probe", path: "generated-app/deploy/runtime-visual-probe.json", present: fs.existsSync(path.join(appRoot, "deploy", "runtime-visual-probe.json")) },
+      { label: "Software diagnostics", path: "generated-app/deploy/software-diagnostic-report.json", present: fs.existsSync(path.join(appRoot, "deploy", "software-diagnostic-report.json")) },
       { label: "Campaign state", path: "suite-campaign-state.json", present: fs.existsSync(path.join(projectRoot, "suite-campaign-state.json")) }
     ]
   };
@@ -845,6 +868,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const campaign = parseCampaign(projectRoot);
   const prompt = parsePromptMeta(projectRoot);
   const runtimeVisualProbe = parseRuntimeVisualProbe(projectRoot);
+  const softwareDiagnostic = parseSoftwareDiagnostic(projectRoot);
   const runStatus = parseRunStatus(projectRoot);
   const releases = parseReleases(projectRoot);
   const iterationMetrics = parseIterationMetrics(projectRoot);
@@ -918,6 +942,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     stageProducts,
     stageResults,
     runtimeVisualProbe,
+    softwareDiagnostic,
     providerSignal,
     topBlockers,
     recoveryState,
