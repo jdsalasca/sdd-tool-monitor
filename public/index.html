@@ -13,6 +13,7 @@
       --muted: #9fb0d5;
       --healthy: #27c98d;
       --critical: #ff6b6b;
+      --recovering: #67d5ff;
       --progress: #f9c74f;
       --line: #25355a;
       --accent: #5ac8fa;
@@ -25,7 +26,7 @@
     .sub { color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
     #updated { text-align: right; }
     #action-status { margin-top: 6px; color: #b9e4ff; }
-    .grid { display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+    .grid { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
     .kpi { background: linear-gradient(180deg, var(--card), var(--card-2)); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 68px; }
     .kpi .k { color: var(--muted); font-size: 11px; margin-bottom: 4px; line-height: 1.1; }
     .kpi .v { font-size: 21px; font-weight: 700; line-height: 1; }
@@ -39,6 +40,7 @@
     tr.active { background: rgba(90,200,250,0.13); }
     .tag { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
     .healthy { background: rgba(39,201,141,0.18); color: var(--healthy); }
+    .recovering { background: rgba(103,213,255,0.2); color: var(--recovering); }
     .critical { background: rgba(255,107,107,0.18); color: var(--critical); }
     .dormant { background: rgba(159,176,213,0.18); color: #c3d2f3; }
     .in_progress { background: rgba(249,199,79,0.18); color: var(--progress); }
@@ -94,7 +96,7 @@
         <div class="title">SDD Tool Monitor</div>
         <div id="workspace" class="sub">Loading workspace...</div>
         <div id="refresh-info" class="sub">Refresh: detecting...</div>
-        <div class="sub">`critical` = active project blocked/stalled/failing gates; `dormant` = older non-active project still needing attention.</div>
+        <div class="sub">`recovering` = blocked but auto-healing active. `critical` = blocked without active recovery. `dormant` = older non-active project still needing attention.</div>
         <div id="action-status" class="sub"></div>
       </div>
       <div class="top-right">
@@ -109,6 +111,7 @@
     <div class="grid">
       <div class="kpi"><div class="k">Projects</div><div id="k-total" class="v">0</div></div>
       <div class="kpi"><div class="k">Healthy</div><div id="k-healthy" class="v">0</div></div>
+      <div class="kpi"><div class="k">Recovering</div><div id="k-recovering" class="v">0</div></div>
       <div class="kpi"><div class="k">Critical</div><div id="k-critical" class="v">0</div></div>
       <div class="kpi"><div class="k">Running Campaigns</div><div id="k-campaigns" class="v">0</div></div>
       <div class="kpi"><div class="k">Running Processes</div><div id="k-running" class="v">0</div></div>
@@ -198,6 +201,7 @@
       const topBlockers = Array.isArray(project.topBlockers) ? project.topBlockers : [];
       const lastEvent = project.lastEvent || { at: '', source: '', summary: '' };
       const providerSignal = project.providerSignal || { state: 'healthy', summary: 'n/a', recentFailureCount: 0, blockingReason: '' };
+      const recoveryState = project.recoveryState || { active: false, tier: 'none', lastAction: '', lastAt: '' };
       const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
       const model = esc(project.runStatus?.raw?.model || 'n/a');
       const heartbeat = Number(project.activity?.freshnessMinutes ?? 9999);
@@ -280,6 +284,7 @@
           <div class='text'>AI timing: last=${esc(humanDuration(aiLastDurationMs))} | avg(6)=${esc(humanDuration(aiAvgDurationMs))} | max(6)=${esc(humanDuration(aiMaxDurationMs))} | last event ${esc(aiAgeMinutes ?? 'n/a')}m ago</div>
           <div class='text'>Suite: running=${suite.running ? 'true' : 'false'} | pid=${esc(suite.suitePid || 0)} | phase=${esc(suite.phase || 'n/a')} | target=${esc(suite.targetStage || 'n/a')} | stalls=${esc(suite.stallCount || 0)}</div>
           <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
+          <div class='text'>Auto-recovery: <span class='tag ${recoveryState.active ? 'recovering' : 'in_progress'}'>${recoveryState.active ? 'active' : 'idle'}</span> | tier=${esc(recoveryState.tier || 'none')} | action=${esc(recoveryState.lastAction || 'n/a')} | at=${esc(recoveryState.lastAt || 'n/a')}</div>
           <div class='text'>Last event: ${esc(lastEvent.at || 'n/a')} | ${esc(lastEvent.source || 'n/a')} | ${esc(lastEvent.summary || 'n/a')}</div>
           <div class='text'>Delivery signal: <span class='tag ${esc(providerSignal.state)}'>${esc(providerSignal.state)}</span> | ${esc(providerSignal.summary || '')}</div>
           <div class='text'>Provider failures (recent): ${esc(providerSignal.recentFailureCount || 0)}${providerSignal.blockingReason ? ` | reason: ${esc(providerSignal.blockingReason)}` : ''}</div>
@@ -290,6 +295,7 @@
           <h3>Executive Summary</h3>
           <div class='text'>Health: ${esc(project.health)} | Value Score: ${esc(project.valueScore)} | Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current || 'n/a')}</div>
           <div class='text'>Lifecycle failures: ${esc(project.lifecycle?.fail || 0)} | Blocking reasons: ${esc((project.blockReasons || []).length)}</div>
+          <div class='text'>Recovery lane: ${recoveryState.active ? 'auto-healing active' : 'not active'} | tier ${esc(recoveryState.tier || 'none')}</div>
           <div class='text'>Provider delivery: ${esc(providerSignal.state)} | ${esc(providerSignal.summary || '')}</div>
           <div class='text'>AI last task: ${esc(project.prompt?.lastStage || 'n/a')} in ${esc(humanDuration(aiLastDurationMs))}</div>
           <div class='text'>Current campaign: cycle ${esc(project.campaign?.cycle || 0)} | phase ${esc(project.campaign?.phase || 'n/a')}</div>
@@ -480,6 +486,7 @@
       setText('refresh-info', `Refresh: every ~${Math.max(1, Math.floor((snapshot.monitor?.refreshMs || 3000) / 1000))}s + file-watch events`);
       setText('k-total', String(snapshot.summary.total));
       setText('k-healthy', String(snapshot.summary.healthy));
+      setText('k-recovering', String(snapshot.summary.recovering || 0));
       setText('k-critical', String(snapshot.summary.critical));
       setText('k-campaigns', String(snapshot.summary.runningCampaigns));
       setText('k-running', String(snapshot.summary.runningProcesses));

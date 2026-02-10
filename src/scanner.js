@@ -172,6 +172,9 @@ function parseCampaign(projectRoot) {
     qualityPassed: Boolean(state.qualityPassed),
     runtimePassed: Boolean(state.runtimePassed),
     targetStage: String(state.targetStage || ""),
+    recoveryActive: Boolean(state.recoveryActive),
+    recoveryTier: String(state.recoveryTier || ""),
+    lastRecoveryAction: String(state.lastRecoveryAction || ""),
     updatedAt
   };
 }
@@ -243,6 +246,11 @@ function parsePromptMeta(projectRoot) {
 
 function parseCampaignJournal(projectRoot) {
   const file = path.join(projectRoot, "suite-campaign-journal.jsonl");
+  return readJsonlTail(file, 40);
+}
+
+function parseRecoveryAudit(projectRoot) {
+  const file = path.join(projectRoot, "autonomous-recovery-audit.jsonl");
   return readJsonlTail(file, 40);
 }
 
@@ -784,6 +792,28 @@ function buildActivitySignals({ runStatus, prompt, campaign, stageTimeline, runn
   };
 }
 
+function inferRecoveryState({ campaign, runStatus, recoveryAudit, activity }) {
+  const latestAudit = Array.isArray(recoveryAudit) ? recoveryAudit.at(-1) : null;
+  const latestAuditMs = isoToMs(latestAudit?.at);
+  const recentAudit = latestAuditMs > 0 && Date.now() - latestAuditMs <= 20 * 60 * 1000;
+  const campaignPhase = String(campaign?.phase || "");
+  const phaseRecovery = /recovery|provider_backoff|provider_quota_recovery|runtime_enforced_continue/i.test(campaignPhase);
+  const campaignRecovery = Boolean(campaign?.recoveryActive) || Boolean(campaign?.lastRecoveryAction);
+  const runStatusRecovery = Boolean(runStatus?.recovery?.command);
+  const fresh = Number(activity?.freshnessMinutes || 9999) <= 30;
+  const active = fresh && (phaseRecovery || campaignRecovery || recentAudit || runStatusRecovery);
+  const tier = String(campaign?.recoveryTier || latestAudit?.tier || "none");
+  const lastAction = String(campaign?.lastRecoveryAction || latestAudit?.action || "");
+  const lastAt = String(campaign?.updatedAt || latestAudit?.at || "");
+  return {
+    active,
+    tier,
+    lastAction,
+    lastAt,
+    source: campaign?.lastRecoveryAction ? "campaign" : latestAudit?.action ? "audit" : runStatusRecovery ? "run-status" : ""
+  };
+}
+
 function buildProjectRow(projectRoot, name, processRows) {
   const lifecycle = parseLifecycle(projectRoot);
   const review = parseDigitalReview(projectRoot);
@@ -795,6 +825,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const iterationMetrics = parseIterationMetrics(projectRoot);
   const life = parseLifeArtifacts(projectRoot);
   const campaignJournal = parseCampaignJournal(projectRoot);
+  const recoveryAudit = parseRecoveryAudit(projectRoot);
   const running = detectRunningProcess(name, processRows);
   if (!running.active && campaign.present && campaign.running !== false && !campaign.targetPassed && campaign.updatedAt && isProcessAlive(campaign.suitePid)) {
     const updatedMs = Date.parse(campaign.updatedAt);
@@ -825,13 +856,15 @@ function buildProjectRow(projectRoot, name, processRows) {
       }))
     : [];
   const activity = buildActivitySignals({ runStatus, prompt, campaign, stageTimeline, running });
+  const recoveryState = inferRecoveryState({ campaign, runStatus, recoveryAudit, activity });
   const blocked =
     Boolean(idleBeforeMinimum?.failed) ||
     Boolean(activity.stalled) ||
     lifecycle.fail > 0 ||
     (runStatus.blockers || []).length > 0;
   const isActiveWindow = Number(activity.freshnessMinutes || 9999) <= 120 || running.active || campaign.running;
-  const health = blocked ? (isActiveWindow ? "critical" : "dormant") : getProjectHealth(stage, lifecycle, review);
+  const recovering = blocked && isActiveWindow && recoveryState.active;
+  const health = blocked ? (isActiveWindow ? (recovering ? "recovering" : "critical") : "dormant") : getProjectHealth(stage, lifecycle, review);
   const blockReasons = [];
   if (idleBeforeMinimum?.failed) blockReasons.push("idle-before-minimum-runtime");
   if (activity.stalled) blockReasons.push(`stalled-no-heartbeat-${activity.freshnessMinutes}m`);
@@ -861,6 +894,8 @@ function buildProjectRow(projectRoot, name, processRows) {
     stageResults,
     providerSignal,
     topBlockers,
+    recoveryState,
+    recoveryAudit: recoveryAudit.slice(-10),
     running,
     activity,
     blocked,
@@ -934,6 +969,7 @@ export async function scanProjects(explicitWorkspace) {
   const summary = {
     total: projects.length,
     healthy: projects.filter((p) => p.health === "healthy").length,
+    recovering: projects.filter((p) => p.health === "recovering").length,
     critical: projects.filter((p) => p.health === "critical").length,
     unhealthy: projects.filter((p) => p.health !== "healthy").length,
     runningCampaigns: projects.filter((p) => p.campaign.present && (p.campaign.running || p.running.active)).length,

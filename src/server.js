@@ -337,7 +337,9 @@ export async function startMonitorServer(options) {
     const snapshot = await scanProjects(workspaceRoot);
     console.log(`sdd-tool-monitor listening on http://${options.host}:${options.port}`);
     console.log(`Workspace: ${snapshot.workspaceRoot}`);
-    console.log(`Projects: ${snapshot.summary.total} | Healthy: ${snapshot.summary.healthy} | Critical: ${snapshot.summary.critical} | Running: ${snapshot.summary.runningProcesses}`);
+    console.log(
+      `Projects: ${snapshot.summary.total} | Healthy: ${snapshot.summary.healthy} | Recovering: ${snapshot.summary.recovering || 0} | Critical: ${snapshot.summary.critical} | Running: ${snapshot.summary.runningProcesses}`
+    );
   });
 
   const pushSnapshot = async () => {
