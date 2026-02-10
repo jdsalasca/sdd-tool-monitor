@@ -202,6 +202,7 @@
       const lastEvent = project.lastEvent || { at: '', source: '', summary: '' };
       const providerSignal = project.providerSignal || { state: 'healthy', summary: 'n/a', recentFailureCount: 0, blockingReason: '' };
       const recoveryState = project.recoveryState || { active: false, tier: 'none', lastAction: '', lastAt: '' };
+      const runtimeVisualProbe = project.runtimeVisualProbe || { present: false, ok: false, captured: false, blankLikely: false, summary: '', screenshotPath: '' };
       const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
       const model = esc(project.runStatus?.raw?.model || 'n/a');
       const heartbeat = Number(project.activity?.freshnessMinutes ?? 9999);
@@ -309,6 +310,12 @@
         <div class='card'>
           <h3>Running Process</h3>
           <div class='text mono'>${runningText}</div>
+        </div>
+        <div class='card'>
+          <h3>Runtime Visual Probe</h3>
+          <div class='text'>Present: ${runtimeVisualProbe.present ? 'yes' : 'no'} | ok: ${runtimeVisualProbe.ok ? 'true' : 'false'} | captured: ${runtimeVisualProbe.captured ? 'true' : 'false'} | blankLikely: ${runtimeVisualProbe.blankLikely ? 'true' : 'false'}</div>
+          <div class='text'>Summary: ${esc(runtimeVisualProbe.summary || 'n/a')}</div>
+          <div class='text mono'>Screenshot: ${esc(runtimeVisualProbe.screenshotPath || 'n/a')}</div>
         </div>
         ${showTech(`
         <div class='card'>

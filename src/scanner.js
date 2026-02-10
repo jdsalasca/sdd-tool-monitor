@@ -244,6 +244,27 @@ function parsePromptMeta(projectRoot) {
   };
 }
 
+function parseRuntimeVisualProbe(projectRoot) {
+  const parsed = readJson(path.join(projectRoot, "generated-app", "deploy", "runtime-visual-probe.json"));
+  if (!parsed) {
+    return {
+      present: false,
+      ok: false,
+      captured: false,
+      blankLikely: false,
+      summary: ""
+    };
+  }
+  return {
+    present: true,
+    ok: Boolean(parsed.ok),
+    captured: Boolean(parsed.captured),
+    blankLikely: Boolean(parsed.blankLikely),
+    summary: String(parsed.summary || ""),
+    screenshotPath: String(parsed.screenshotPath || "")
+  };
+}
+
 function parseCampaignJournal(projectRoot) {
   const file = path.join(projectRoot, "suite-campaign-journal.jsonl");
   return readJsonlTail(file, 40);
@@ -649,6 +670,7 @@ function parseStageProducts(projectRoot, releases) {
     ],
     runtime_start: [
       { label: "Runtime process metadata", path: "generated-app/deploy/runtime-processes.json", present: fs.existsSync(path.join(appRoot, "deploy", "runtime-processes.json")) },
+      { label: "Runtime visual probe", path: "generated-app/deploy/runtime-visual-probe.json", present: fs.existsSync(path.join(appRoot, "deploy", "runtime-visual-probe.json")) },
       { label: "Campaign state", path: "suite-campaign-state.json", present: fs.existsSync(path.join(projectRoot, "suite-campaign-state.json")) }
     ]
   };
@@ -820,6 +842,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const stage = parseStage(projectRoot);
   const campaign = parseCampaign(projectRoot);
   const prompt = parsePromptMeta(projectRoot);
+  const runtimeVisualProbe = parseRuntimeVisualProbe(projectRoot);
   const runStatus = parseRunStatus(projectRoot);
   const releases = parseReleases(projectRoot);
   const iterationMetrics = parseIterationMetrics(projectRoot);
@@ -892,6 +915,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     life,
     stageProducts,
     stageResults,
+    runtimeVisualProbe,
     providerSignal,
     topBlockers,
     recoveryState,
