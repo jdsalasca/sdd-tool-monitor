@@ -60,6 +60,7 @@
         <div class="title">SDD Tool Monitor</div>
         <div id="workspace" class="sub">Loading workspace...</div>
         <div id="refresh-info" class="sub">Refresh: detecting...</div>
+        <div id="action-status" class="sub"></div>
       </div>
       <div id="updated" class="sub">waiting updates...</div>
     </div>
@@ -191,6 +192,11 @@
         <div class='card'>
           <h3>${esc(project.name)} <button class='btn icon' onclick='refreshSelectedProject()' title='Refresh this project'>↻</button></h3>
           <div class='text'>Root: ${esc(project.projectRoot)}</div>
+          <div class='text'>
+            <button class='btn' onclick='projectAction("pause")'>Pause</button>
+            <button class='btn' onclick='projectAction("resume")'>Resume</button>
+            <button class='btn' onclick='projectAction("restart")'>Restart</button>
+          </div>
           <div class='text'>Stage: ${esc(project.runStatus?.stageCurrent || project.stage?.current)} | Step: ${esc(project.runStatus?.step || 'n/a')} | Progress: ${esc(project.stageProgress?.completed || 0)}/${esc(project.stageProgress?.total || 9)} (${esc(project.stageProgress?.percent || 0)}%)</div>
           <div class='stage-bar'>${renderStageBar(project)}</div>
           <div class='text'>Heartbeat: ${esc(heartbeat)}m ${stale ? '| STALLED' : '| active'} | Last run status: ${esc(project.activity?.lastRunStatusAt || 'n/a')}</div>
@@ -316,6 +322,27 @@
 
     window.refreshSelectedProject = () => refreshProject(state.selected);
     window.refreshProjectByName = (projectName) => refreshProject(projectName);
+
+    window.projectAction = async (action) => {
+      if (!state.selected) return;
+      const statusEl = document.getElementById('action-status');
+      try {
+        statusEl.textContent = `Action ${action} on ${state.selected}...`;
+        const payload = await fetch(`/api/project/${encodeURIComponent(state.selected)}/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        }).then((r) => r.json());
+        if (!payload.ok) {
+          statusEl.textContent = `Action failed: ${payload.details || payload.error || 'unknown error'}`;
+          return;
+        }
+        statusEl.textContent = `Action ${action} OK${payload.suitePid ? ` (pid ${payload.suitePid})` : ''}`;
+        await refreshProject(state.selected);
+      } catch (error) {
+        statusEl.textContent = `Action failed: ${error.message}`;
+      }
+    };
 
     function render(snapshot) {
       state.snapshot = snapshot;
