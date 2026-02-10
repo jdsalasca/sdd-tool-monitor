@@ -756,16 +756,11 @@ function buildProjectRow(projectRoot, name, processRows) {
   const life = parseLifeArtifacts(projectRoot);
   const campaignJournal = parseCampaignJournal(projectRoot);
   const running = detectRunningProcess(name, processRows);
-  if (!running.active && campaign.present && campaign.running && isProcessAlive(campaign.suitePid)) {
-    running.active = true;
-    running.processId = Number.isFinite(campaign.suitePid) ? campaign.suitePid : 0;
-    running.command = campaign.phase ? `suite ${campaign.phase}` : "suite campaign running";
-  }
   if (!running.active && campaign.present && campaign.running !== false && !campaign.targetPassed && campaign.updatedAt && isProcessAlive(campaign.suitePid)) {
     const updatedMs = Date.parse(campaign.updatedAt);
-    if (Number.isFinite(updatedMs) && Date.now() - updatedMs <= 180000) {
+    if (Number.isFinite(updatedMs) && Date.now() - updatedMs <= 300000) {
       running.active = true;
-      running.command = "inferred from fresh campaign state";
+      running.command = campaign.phase ? `suite ${campaign.phase}` : "inferred from fresh campaign state";
       running.processId = Number(campaign.suitePid || 0);
     }
   }
@@ -860,20 +855,33 @@ export async function scanProjects(explicitWorkspace) {
   }
 
   if (suiteLock.present && isProcessAlive(suiteLock.pid)) {
-    const lockPidTracked = projects.some((project) => project.running?.active && Number(project.running.processId || 0) === suiteLock.pid);
-    if (!lockPidTracked) {
-      const candidate = projects
-        .filter((project) => project.campaign?.present && project.campaign?.running !== false)
-        .sort((a, b) => {
-          const aMs = Date.parse(a.campaign?.updatedAt || "") || 0;
-          const bMs = Date.parse(b.campaign?.updatedAt || "") || 0;
-          return bMs - aMs;
-        })[0];
-      if (candidate) {
-        candidate.running.active = true;
-        candidate.running.processId = suiteLock.pid;
-        candidate.running.command = "inferred from workspace suite lock";
+    const candidate = projects
+      .filter((project) => {
+        const campaignActive = project.campaign?.present && project.campaign?.running !== false;
+        const freshRunStatus = project.runStatus?.present && Number(project.activity?.freshnessMinutes || 9999) <= 5;
+        return campaignActive || freshRunStatus;
+      })
+      .sort((a, b) => {
+        const aFreshRun = a.runStatus?.present && Number(a.activity?.freshnessMinutes || 9999) <= 5 ? 1 : 0;
+        const bFreshRun = b.runStatus?.present && Number(b.activity?.freshnessMinutes || 9999) <= 5 ? 1 : 0;
+        if (aFreshRun !== bFreshRun) {
+          return bFreshRun - aFreshRun;
+        }
+        const aMs = Date.parse(a.activity?.freshestAt || a.campaign?.updatedAt || a.updatedAt || "") || 0;
+        const bMs = Date.parse(b.activity?.freshestAt || b.campaign?.updatedAt || b.updatedAt || "") || 0;
+        return bMs - aMs;
+      })[0];
+    if (candidate) {
+      for (const project of projects) {
+        if (project.name !== candidate.name && Number(project.running?.processId || 0) === suiteLock.pid) {
+          project.running.active = false;
+          project.running.processId = 0;
+          project.running.command = "";
+        }
       }
+      candidate.running.active = true;
+      candidate.running.processId = suiteLock.pid;
+      candidate.running.command = "inferred from workspace suite lock";
     }
   }
 
