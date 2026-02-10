@@ -589,6 +589,89 @@ function buildStageResults(stage, stageProducts) {
   });
 }
 
+function suggestAutoActionsFromText(text) {
+  const lower = String(text || "").toLowerCase();
+  const actions = [];
+  if (lower.includes("terminalquotaerror") || lower.includes("exhausted your capacity") || lower.includes("429")) {
+    actions.push("rotate provider model and apply provider backoff");
+  }
+  if (lower.includes("ready for your command") || lower.includes("empty output")) {
+    actions.push("mark provider non-delivery and force regeneration retry");
+  }
+  if (lower.includes("jest encountered an unexpected token") || lower.includes("unexpected token 'export'")) {
+    actions.push("normalize module format and align jest config automatically");
+  }
+  if (lower.includes("eslint plugin") || lower.includes("eslint couldn't find")) {
+    actions.push("install missing eslint plugins/deps and regenerate lint config");
+  }
+  if (lower.includes("build for macos is supported only on macos")) {
+    actions.push("rewrite build scripts for host OS compatibility");
+  }
+  if (lower.includes("missing smoke/e2e npm script") || lower.includes("smoke")) {
+    actions.push("create cross-platform smoke script and wire package.json");
+  }
+  if (lower.includes("missing dummylocal integration doc")) {
+    actions.push("generate dummy-local.md integration artifact");
+  }
+  if (lower.includes("readme")) {
+    actions.push("normalize README sections and release artifact guidance");
+  }
+  return [...new Set(actions)].slice(0, 3);
+}
+
+function buildTopBlockers({ lifecycle, runStatus, providerSignal, blockReasons }) {
+  const candidates = [];
+  const runBlockers = Array.isArray(runStatus?.blockers) ? runStatus.blockers : [];
+  for (const reason of runBlockers.slice(0, 8)) {
+    const actions = suggestAutoActionsFromText(reason);
+    candidates.push({
+      source: "run-status",
+      reason: String(reason || ""),
+      actions
+    });
+  }
+  const lifeFailures = Array.isArray(lifecycle?.failItems) ? lifecycle.failItems : [];
+  for (const reason of lifeFailures.slice(0, 8)) {
+    const actions = suggestAutoActionsFromText(reason);
+    candidates.push({
+      source: "lifecycle",
+      reason: String(reason || ""),
+      actions
+    });
+  }
+  if (providerSignal?.state === "blocked" || providerSignal?.state === "degraded") {
+    const reason = providerSignal.blockingReason || providerSignal.summary || "provider delivery degraded";
+    const actions = suggestAutoActionsFromText(reason);
+    candidates.push({
+      source: "provider",
+      reason: String(reason),
+      actions
+    });
+  }
+  if (candidates.length === 0) {
+    return [];
+  }
+  const scored = candidates.map((item) => {
+    let severity = 1;
+    const lower = item.reason.toLowerCase();
+    if (/quota|capacity|429|terminalquotaerror|provider/i.test(lower)) severity = 5;
+    else if (/build|test|lint|smoke|failed|error/i.test(lower)) severity = 4;
+    else if (/missing|pending|blocked/i.test(lower)) severity = 3;
+    return { ...item, severity };
+  });
+  scored.sort((a, b) => b.severity - a.severity);
+  const unique = [];
+  const seen = new Set();
+  for (const item of scored) {
+    const key = item.reason.slice(0, 120).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(item);
+    if (unique.length >= 3) break;
+  }
+  return unique;
+}
+
 function isoToMs(value) {
   const parsed = Date.parse(String(value || ""));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -687,6 +770,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   if (lifecycle.fail > 0) blockReasons.push("lifecycle-failures");
   if (providerSignal.state === "blocked") blockReasons.push("provider-delivery-blocked");
   if (providerSignal.state === "degraded") blockReasons.push("provider-delivery-degraded");
+  const topBlockers = buildTopBlockers({ lifecycle, runStatus, providerSignal, blockReasons });
 
   return {
     name,
@@ -705,6 +789,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     stageProducts,
     stageResults,
     providerSignal,
+    topBlockers,
     running,
     activity,
     blocked,
