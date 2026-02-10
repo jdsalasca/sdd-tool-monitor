@@ -317,6 +317,30 @@ function parseSoftwareDiagnostic(projectRoot) {
   };
 }
 
+function parseCampaignDebugReport(projectRoot) {
+  const parsed = readJson(path.join(projectRoot, "debug", "campaign-debug-report.json"));
+  if (!parsed) {
+    return {
+      present: false,
+      providerIssue: "",
+      recoveryTier: "",
+      rootCauses: [],
+      recommendations: []
+    };
+  }
+  return {
+    present: true,
+    at: String(parsed.at || ""),
+    cycle: Number(parsed.cycle || 0),
+    elapsedMinutes: Number(parsed.elapsedMinutes || 0),
+    providerIssue: String(parsed.providerIssue || ""),
+    recoveryTier: String(parsed.recoveryTier || ""),
+    recoveryAction: String(parsed.recoveryAction || ""),
+    rootCauses: Array.isArray(parsed.rootCauses) ? parsed.rootCauses.slice(0, 8).map((v) => String(v)) : [],
+    recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations.slice(0, 8).map((v) => String(v)) : []
+  };
+}
+
 function parseCampaignJournal(projectRoot) {
   const file = path.join(projectRoot, "suite-campaign-journal.jsonl");
   return readJsonlTail(file, 40);
@@ -897,6 +921,7 @@ function buildProjectRow(projectRoot, name, processRows) {
   const prompt = parsePromptMeta(projectRoot);
   const runtimeVisualProbe = parseRuntimeVisualProbe(projectRoot);
   const softwareDiagnostic = parseSoftwareDiagnostic(projectRoot);
+  const campaignDebug = parseCampaignDebugReport(projectRoot);
   const runStatus = parseRunStatus(projectRoot);
   const releases = parseReleases(projectRoot);
   const iterationMetrics = parseIterationMetrics(projectRoot);
@@ -971,6 +996,7 @@ function buildProjectRow(projectRoot, name, processRows) {
     stageResults,
     runtimeVisualProbe,
     softwareDiagnostic,
+    campaignDebug,
     providerSignal,
     topBlockers,
     recoveryState,

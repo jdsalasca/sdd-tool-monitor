@@ -218,6 +218,7 @@
         functionalChecks: [],
         actionTimeline: []
       };
+      const campaignDebug = project.campaignDebug || { present: false, providerIssue: '', recoveryTier: '', rootCauses: [], recommendations: [], recoveryAction: '', cycle: 0, elapsedMinutes: 0, at: '' };
       const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
       const model = esc(project.runStatus?.raw?.model || 'n/a');
       const heartbeat = Number(project.activity?.freshnessMinutes ?? 9999);
@@ -378,6 +379,16 @@
           <ul class='text'>${blockers.slice(0, 8).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>none</li>'}</ul>
           <div class='text'>Detected by monitor:</div>
           <ul class='text'>${blockReasons || '<li>none</li>'}</ul>
+        </div>
+        <div class='card'>
+          <h3>Campaign Debug Report</h3>
+          <div class='text'>Present: ${campaignDebug.present ? 'yes' : 'no'} | providerIssue: ${esc(campaignDebug.providerIssue || 'n/a')} | recoveryTier: ${esc(campaignDebug.recoveryTier || 'n/a')}</div>
+          <div class='text'>Cycle: ${esc(campaignDebug.cycle || 0)} | elapsed: ${esc(campaignDebug.elapsedMinutes || 0)}m | at: ${esc(campaignDebug.at || 'n/a')}</div>
+          <div class='text'>Recovery action: ${esc(campaignDebug.recoveryAction || 'n/a')}</div>
+          <div class='text'><b>Root causes:</b></div>
+          <ul class='text'>${(campaignDebug.rootCauses || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>none</li>'}</ul>
+          <div class='text'><b>Recommendations:</b></div>
+          <ul class='text'>${(campaignDebug.recommendations || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>none</li>'}</ul>
         </div>
         <div class='card'>
           <h3>Top 3 Blockers</h3>
