@@ -382,6 +382,12 @@ function parseRecoveryEvents(projectRoot) {
 }
 
 function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
+  const nowMs = Date.now();
+  const windowMs = 30 * 60 * 1000;
+  const isFreshIso = (value) => {
+    const ms = Date.parse(String(value || ""));
+    return Number.isFinite(ms) && nowMs - ms <= windowMs;
+  };
   const recent = Array.isArray(prompt?.recent) ? prompt.recent : [];
   const recentFailures = recent
     .filter((row) => row && row.ok === false)
@@ -394,16 +400,20 @@ function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
         .filter((line) => !/\bdep0040\b|punycode|loaded cached credentials|hook registry initialized/i.test(line))
         .join(" ")
     }))
-    .filter((row) => row.error.length > 0 || String(row?.outputPreview || "").trim().length > 0);
+    .filter((row) => row.error.length > 0 || String(row?.outputPreview || "").trim().length > 0)
+    .filter((row) => isFreshIso(row.at));
   const lastFailure = recentFailures.at(-1);
   const outputPreview = String(prompt?.lastOutputPreview || "").toLowerCase();
   const lastErrorText = String(lastFailure?.error || prompt?.lastError || campaign?.lastError || "").toLowerCase();
+  const runStatusFresh = isFreshIso(runStatus?.raw?.at);
+  const campaignFresh = isFreshIso(campaign?.updatedAt);
+  const lastErrorEffective = runStatusFresh || campaignFresh ? lastErrorText : "";
   const nonDelivery =
     outputPreview.includes("ready for your command") ||
     outputPreview.trim() === "" ||
-    lastErrorText.includes("empty output");
+    lastErrorEffective.includes("empty output");
   const providerBlocked = /provider_backoff|provider_blocked|provider_quota_recovery/i.test(String(campaign?.phase || ""));
-  const quotaLike = /quota|capacity|429|terminalquotaerror/i.test(lastErrorText);
+  const quotaLike = /quota|capacity|429|terminalquotaerror/i.test(lastErrorEffective);
   const journalBlocked = (campaignJournal || []).some((row) => /campaign\.provider\.blocked/i.test(String(row?.event || "")));
 
   let state = "healthy";
@@ -439,7 +449,7 @@ function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
     }
     return compact.length > 180 ? `${compact.slice(0, 180)}...` : compact;
   };
-  const blockingReason = state === "blocked" ? summarizeReason(campaign?.lastError || lastFailure?.error || "provider delivery blocked") : "";
+  const blockingReason = state === "blocked" ? summarizeReason(lastErrorEffective || lastFailure?.error || "provider delivery blocked") : "";
   const recentFailuresCompact = recentFailures.slice(-4).map((row) => ({
     at: String(row.at || ""),
     stage: String(row.stage || ""),

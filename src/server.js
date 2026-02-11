@@ -157,11 +157,12 @@ function startSuite(project) {
   const outFd = fs.openSync(outFile, "a");
   const errFd = fs.openSync(errFile, "a");
 
-  const provider = project.runStatus?.raw?.provider || "gemini";
+  const provider = String(project.runStatus?.raw?.provider || "gemini").trim().toLowerCase();
   const model = project.runStatus?.raw?.model || project.campaign?.model || "";
   const hint = sanitizePrompt(project.runStatus?.recovery?.hint || "");
   const args = ["dist/cli.js", "--provider", provider, "--non-interactive", "--project", project.name, "recover"];
-  if (model) {
+  const pinModel = process.env.SDD_MONITOR_PIN_MODEL === "1";
+  if (model && (provider !== "gemini" || pinModel)) {
     args.push("--model", model);
   }
   args.push("--campaign-hours", "6", "--campaign-max-cycles", "500", "--campaign-sleep-seconds", "5", hint);
