@@ -151,7 +151,7 @@
   </div>
 
   <script>
-    const state = { snapshot: null, selected: null, viewMode: 'executive', actionBusy: false };
+    const state = { snapshot: null, selected: null, viewMode: 'executive', actionBusy: false, selectedCooldownModel: '' };
     const stageOrder = ['discovery','functional_requirements','technical_backlog','implementation','quality_validation','role_review','release_candidate','final_release','runtime_start'];
     const setText = (id, value) => { document.getElementById(id).textContent = value; };
 
@@ -198,15 +198,40 @@
 
     function renderDetail(project) {
       const container = document.getElementById('detail');
-      const cooldowns = state.snapshot?.modelCooldowns || { present: false, entries: [], summary: { totalUnavailable: 0, nearestResetMinutes: null } };
+      const cooldowns = state.snapshot?.modelCooldowns || { present: false, entries: [], catalog: [], summary: { totalUnavailable: 0, nearestResetMinutes: null, readyKnownModels: 0 } };
       const cooldownRows = (cooldowns.entries || []).slice(0, 10).map((row) =>
         `<li>${esc(row.provider)} | ${esc(row.model)} | reset in ${esc(humanMinutes(row.remainingMinutes))}${row.reason ? ` | ${esc(row.reason)}` : ''}</li>`
+      ).join('');
+      const modelOptions = (cooldowns.entries || []).map((row) => {
+        const value = `${row.provider}::${row.model}`;
+        const selected = state.selectedCooldownModel === value ? 'selected' : '';
+        return `<option value="${esc(value)}" ${selected}>${esc(row.provider)} | ${esc(row.model)} (${esc(humanMinutes(row.remainingMinutes))})</option>`;
+      }).join('');
+      const catalogRows = (cooldowns.catalog || []).map((row) =>
+        `<li>${esc(row.provider)} | ${esc(row.model)} | <span class='tag ${row.status === 'blocked' ? 'blocked' : 'healthy'}'>${esc(row.status)}</span>${row.status === 'blocked' ? ` | reset in ${esc(humanMinutes(row.remainingMinutes))}` : ''}</li>`
       ).join('');
       const cooldownCard = `
         <div class='card'>
           <h3>Model Cooldowns</h3>
-          <div class='text'>Blocked models: ${esc(cooldowns.summary?.totalUnavailable || 0)} | Next reset: ${cooldowns.summary?.nearestResetMinutes == null ? 'n/a' : esc(humanMinutes(cooldowns.summary.nearestResetMinutes))}</div>
+          <div class='text'>Blocked models: ${esc(cooldowns.summary?.totalUnavailable || 0)} | Ready known models: ${esc(cooldowns.summary?.readyKnownModels || 0)} | Next reset: ${cooldowns.summary?.nearestResetMinutes == null ? 'n/a' : esc(humanMinutes(cooldowns.summary.nearestResetMinutes))}</div>
+          <div class='btn-row'>
+            <button class='btn' onclick='modelCacheAction("reload")'>Reload Models</button>
+            <button class='btn pause' onclick='modelCacheAction("clear_provider","gemini")'>Force Review Gemini</button>
+            <button class='btn restart' onclick='modelCacheAction("clear_all")'>Force Review All</button>
+          </div>
+          <div class='text'>
+            <label for='cooldown-model-select'>Blocked model:</label>
+            <select id='cooldown-model-select' class='select' onchange='selectCooldownModel(this.value)'>
+              <option value=''>select model...</option>
+              ${modelOptions}
+            </select>
+          </div>
+          <div class='btn-row'>
+            <button class='btn resume' onclick='clearSelectedModelCooldown()'>Force Review Selected</button>
+          </div>
           <ul class='text'>${cooldownRows || '<li>none</li>'}</ul>
+          <div class='text'><b>Known model catalog</b></div>
+          <ul class='text'>${catalogRows || '<li>none</li>'}</ul>
         </div>
       `;
       if (!project) {
@@ -511,6 +536,10 @@
       renderDetail(project);
     };
 
+    window.selectCooldownModel = (value) => {
+      state.selectedCooldownModel = String(value || '');
+    };
+
     window.copyRecovery = () => {
       const text = document.getElementById('recover-cmd')?.textContent || '';
       navigator.clipboard.writeText(text).catch(() => {});
@@ -561,6 +590,53 @@
         setTimeout(() => {
           state.actionBusy = false;
         }, 1200);
+      }
+    };
+
+    window.modelCacheAction = async (action, provider = '') => {
+      const statusEl = document.getElementById('action-status');
+      try {
+        statusEl.textContent = `Models action ${action}...`;
+        const payload = await fetch('/api/models/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action, provider })
+        }).then((r) => r.json());
+        if (!payload.ok) {
+          statusEl.textContent = `Action failed: ${payload.details || payload.error || 'unknown error'}`;
+          return;
+        }
+        await refreshProject(state.selected);
+        const next = await fetch('/api/status').then((r) => r.json());
+        render(next);
+        statusEl.textContent = `Models action ${action} OK`;
+      } catch (error) {
+        statusEl.textContent = `Action failed: ${error.message}`;
+      }
+    };
+
+    window.clearSelectedModelCooldown = async () => {
+      const value = String(state.selectedCooldownModel || '').trim();
+      if (!value.includes('::')) return;
+      const [provider, model] = value.split('::');
+      const statusEl = document.getElementById('action-status');
+      try {
+        statusEl.textContent = `Forcing review for ${provider}/${model}...`;
+        const payload = await fetch('/api/models/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'clear_model', provider, model })
+        }).then((r) => r.json());
+        if (!payload.ok) {
+          statusEl.textContent = `Action failed: ${payload.details || payload.error || 'unknown error'}`;
+          return;
+        }
+        state.selectedCooldownModel = '';
+        const next = await fetch('/api/status').then((r) => r.json());
+        render(next);
+        statusEl.textContent = `Forced review OK for ${provider}/${model}`;
+      } catch (error) {
+        statusEl.textContent = `Action failed: ${error.message}`;
       }
     };
 

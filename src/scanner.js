@@ -383,7 +383,18 @@ function parseRecoveryEvents(projectRoot) {
 
 function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
   const recent = Array.isArray(prompt?.recent) ? prompt.recent : [];
-  const recentFailures = recent.filter((row) => row && row.ok === false);
+  const recentFailures = recent
+    .filter((row) => row && row.ok === false)
+    .map((row) => ({
+      ...row,
+      error: String(row?.error || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .filter((line) => !/\bdep0040\b|punycode|loaded cached credentials|hook registry initialized/i.test(line))
+        .join(" ")
+    }))
+    .filter((row) => row.error.length > 0 || String(row?.outputPreview || "").trim().length > 0);
   const lastFailure = recentFailures.at(-1);
   const outputPreview = String(prompt?.lastOutputPreview || "").toLowerCase();
   const lastErrorText = String(lastFailure?.error || prompt?.lastError || campaign?.lastError || "").toLowerCase();
@@ -555,12 +566,32 @@ function resolveStateBaseDir(appName = "sdd-cli") {
 function parseModelAvailabilityCache() {
   const cacheFile = path.join(resolveStateBaseDir("sdd-cli"), "state", "model-availability-cache.json");
   const parsed = readJson(cacheFile);
+  const geminiPriority = [
+    "gemini-3-pro-preview",
+    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash"
+  ];
+  const buildCatalog = (entries) =>
+    geminiPriority.map((model) => {
+      const blocked = entries.find((entry) => entry.provider === "gemini" && entry.model === model);
+      return {
+        provider: "gemini",
+        model,
+        status: blocked ? "blocked" : "ready",
+        remainingMinutes: blocked ? blocked.remainingMinutes : 0,
+        reason: blocked ? blocked.reason : ""
+      };
+    });
   if (!parsed || typeof parsed !== "object") {
     return {
       present: false,
       file: cacheFile,
       entries: [],
-      summary: { totalUnavailable: 0, activeProviders: 0, nearestResetMinutes: null }
+      catalog: buildCatalog([]),
+      summary: { totalUnavailable: 0, activeProviders: 0, nearestResetMinutes: null, readyKnownModels: geminiPriority.length }
     };
   }
   const providers = parsed?.providers && typeof parsed.providers === "object" ? parsed.providers : {};
@@ -589,14 +620,17 @@ function parseModelAvailabilityCache() {
   entries.sort((a, b) => a.remainingMs - b.remainingMs);
   const activeProviders = new Set(entries.map((entry) => entry.provider).filter(Boolean)).size;
   const nearestResetMinutes = entries.length > 0 ? entries[0].remainingMinutes : null;
+  const catalog = buildCatalog(entries);
   return {
     present: true,
     file: cacheFile,
     entries,
+    catalog,
     summary: {
       totalUnavailable: entries.length,
       activeProviders,
-      nearestResetMinutes
+      nearestResetMinutes,
+      readyKnownModels: catalog.filter((item) => item.status === "ready").length
     }
   };
 }

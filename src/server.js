@@ -2,6 +2,7 @@ import express from "express";
 import chokidar from "chokidar";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { execSync, spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { resolveWorkspaceRoot } from "./config.js";
@@ -185,6 +186,81 @@ function withMonitorMeta(snapshot, options) {
   };
 }
 
+function resolveStateBaseDir(appName = "sdd-cli") {
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(appData, appName);
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", appName);
+  }
+  const xdg = process.env.XDG_STATE_HOME || process.env.XDG_CONFIG_HOME;
+  if (xdg && xdg.trim().length > 0) {
+    return path.join(xdg.trim(), appName);
+  }
+  return path.join(os.homedir(), ".local", "state", appName);
+}
+
+function resolveModelCacheFile() {
+  return path.join(resolveStateBaseDir("sdd-cli"), "state", "model-availability-cache.json");
+}
+
+function readModelCache() {
+  const file = resolveModelCacheFile();
+  if (!fs.existsSync(file)) {
+    return { version: 1, providers: {} };
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
+    if (!parsed || typeof parsed !== "object") {
+      return { version: 1, providers: {} };
+    }
+    if (!parsed.providers || typeof parsed.providers !== "object") {
+      return { version: 1, providers: {} };
+    }
+    return parsed;
+  } catch {
+    return { version: 1, providers: {} };
+  }
+}
+
+function writeModelCache(next) {
+  const file = resolveModelCacheFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(next, null, 2), "utf-8");
+}
+
+function clearModelCooldowns(payload) {
+  const cache = readModelCache();
+  const provider = String(payload?.provider || "").trim().toLowerCase();
+  const model = String(payload?.model || "").trim();
+  const clearAll = Boolean(payload?.clearAll);
+  let changed = false;
+  if (!clearAll && provider && model) {
+    if (cache.providers?.[provider]?.[model]) {
+      delete cache.providers[provider][model];
+      changed = true;
+      if (Object.keys(cache.providers[provider]).length === 0) {
+        delete cache.providers[provider];
+      }
+    }
+  } else if (!clearAll && provider) {
+    if (cache.providers?.[provider]) {
+      delete cache.providers[provider];
+      changed = true;
+    }
+  } else if (clearAll) {
+    if (Object.keys(cache.providers || {}).length > 0) {
+      cache.providers = {};
+      changed = true;
+    }
+  }
+  if (changed) {
+    writeModelCache(cache);
+  }
+  return { changed, file: resolveModelCacheFile() };
+}
+
 export async function startMonitorServer(options) {
   const workspaceRoot = resolveWorkspaceRoot(options.workspace);
   const app = express();
@@ -262,6 +338,43 @@ export async function startMonitorServer(options) {
       workspaceRoot: snapshot.workspaceRoot,
       project: found,
       monitor: { refreshMs: Math.max(1000, options.refreshMs), stream: "sse+fswatch" }
+    });
+  });
+
+  app.get("/api/models/status", async (_req, res) => {
+    const snapshot = await loadSnapshot(false);
+    res.json({
+      ok: true,
+      at: snapshot.at,
+      modelCooldowns: snapshot.modelCooldowns || null
+    });
+  });
+
+  app.post("/api/models/action", async (req, res) => {
+    const action = String(req.body?.action || "").trim().toLowerCase();
+    if (!["clear_model", "clear_provider", "clear_all", "reload"].includes(action)) {
+      res.status(400).json({ ok: false, error: "invalid_action", details: "Use clear_model|clear_provider|clear_all|reload" });
+      return;
+    }
+    if (action === "reload") {
+      const refreshed = await loadSnapshot(true);
+      res.json({ ok: true, action, modelCooldowns: refreshed.modelCooldowns || null });
+      return;
+    }
+    const provider = String(req.body?.provider || "").trim().toLowerCase();
+    const model = String(req.body?.model || "").trim();
+    const result = clearModelCooldowns({
+      provider,
+      model,
+      clearAll: action === "clear_all"
+    });
+    const refreshed = await loadSnapshot(true);
+    res.json({
+      ok: true,
+      action,
+      changed: result.changed,
+      file: result.file,
+      modelCooldowns: refreshed.modelCooldowns || null
     });
   });
 
