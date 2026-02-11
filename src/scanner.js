@@ -412,6 +412,13 @@ function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
     outputPreview.includes("ready for your command") ||
     outputPreview.trim() === "" ||
     lastErrorEffective.includes("empty output");
+  const unusableDelivery =
+    /unable to (proceed|fix|continue).*(tool|tools).*(not available|limitations)|cannot .*tool|tool limitations|limitations in my current toolset/i.test(
+      outputPreview
+    ) ||
+    /unable to (proceed|fix|continue).*(tool|tools).*(not available|limitations)|cannot .*tool|tool limitations|limitations in my current toolset/i.test(
+      lastErrorEffective
+    );
   const providerBlocked = /provider_backoff|provider_blocked|provider_quota_recovery/i.test(String(campaign?.phase || ""));
   const quotaLike = /quota|capacity|429|terminalquotaerror/i.test(lastErrorEffective);
   const journalBlocked = (campaignJournal || []).some((row) => /campaign\.provider\.blocked/i.test(String(row?.event || "")));
@@ -421,7 +428,7 @@ function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
   if (providerBlocked || journalBlocked || quotaLike) {
     state = "blocked";
     summary = "Provider delivery blocked (quota/capacity or hard failure).";
-  } else if (nonDelivery || recentFailures.length >= 2) {
+  } else if (nonDelivery || unusableDelivery || recentFailures.length >= 2) {
     state = "degraded";
     summary = "Provider is responding but not delivering usable payloads consistently.";
   }
