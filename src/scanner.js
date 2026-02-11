@@ -681,7 +681,8 @@ function parseStageProducts(projectRoot, releases) {
     quality_validation: [
       { label: "Lifecycle report", path: "generated-app/deploy/lifecycle-report.json", present: fs.existsSync(path.join(appRoot, "deploy", "lifecycle-report.json")) },
       { label: "Iteration metrics", path: "generated-app/deploy/iteration-metrics.json", present: fs.existsSync(path.join(appRoot, "deploy", "iteration-metrics.json")) },
-      { label: "Quality backlog", path: "generated-app/deploy/quality-backlog.json", present: fs.existsSync(path.join(appRoot, "deploy", "quality-backlog.json")) }
+      { label: "Quality backlog", path: "generated-app/deploy/quality-backlog.json", present: fs.existsSync(path.join(appRoot, "deploy", "quality-backlog.json")) },
+      { label: "Bug backlog", path: "generated-app/deploy/bug-backlog.json", present: fs.existsSync(path.join(appRoot, "deploy", "bug-backlog.json")) }
     ],
     role_review: [
       { label: "Digital review report", path: "generated-app/deploy/digital-review-report.json", present: fs.existsSync(path.join(appRoot, "deploy", "digital-review-report.json")) },
