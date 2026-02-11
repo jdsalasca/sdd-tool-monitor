@@ -3,63 +3,20 @@ import os from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { resolveWorkspaceRoot } from "./config.js";
-
-const STAGE_ORDER = [
-  "discovery",
-  "functional_requirements",
-  "technical_backlog",
-  "implementation",
-  "quality_validation",
-  "role_review",
-  "release_candidate",
-  "final_release",
-  "runtime_start"
-];
-
-function readJson(file) {
-  if (!fs.existsSync(file)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf-8"));
-  } catch {
-    return null;
-  }
-}
-
-function readText(file) {
-  if (!fs.existsSync(file)) return "";
-  try {
-    return fs.readFileSync(file, "utf-8");
-  } catch {
-    return "";
-  }
-}
-
-function safeParseJsonLine(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
-
-function readJsonlTail(file, max = 10) {
-  if (!fs.existsSync(file)) return [];
-  let raw = "";
-  try {
-    const stat = fs.statSync(file);
-    const tailBytes = Math.min(stat.size, 256 * 1024);
-    const start = Math.max(0, stat.size - tailBytes);
-    const fd = fs.openSync(file, "r");
-    const buffer = Buffer.alloc(tailBytes);
-    fs.readSync(fd, buffer, 0, tailBytes, start);
-    fs.closeSync(fd);
-    raw = buffer.toString("utf-8");
-  } catch {
-    raw = readText(file);
-  }
-  const lines = raw.split(/\r?\n/).filter(Boolean);
-  return lines.slice(Math.max(0, lines.length - max)).map(safeParseJsonLine).filter(Boolean);
-}
+import { readJson, readJsonlTail, readText } from "./scanner/file-utils.js";
+import { parseProviderSignal } from "./scanner/provider-signal.js";
+import {
+  buildActivitySignals,
+  buildTopBlockers,
+  computeValueScore,
+  detectIdleBeforeMinimum,
+  getProjectHealth,
+  inferLastEvent,
+  inferRecoveryState,
+  parseStageFromState,
+  summarizeBlockerReason
+} from "./scanner/health.js";
+import { buildStageProgress, buildStageResults, findLastPassedStage, STAGE_ORDER } from "./scanner/stages.js";
 
 function parseLifecycle(projectRoot) {
   const jsonFile = path.join(projectRoot, "generated-app", "deploy", "lifecycle-report.json");
@@ -141,7 +98,7 @@ function parseDigitalReview(projectRoot) {
 function parseStage(projectRoot) {
   const parsed = readJson(path.join(projectRoot, ".sdd-stage-state.json"));
   const stages = parsed?.stages || {};
-  const current = STAGE_ORDER.find((stage) => stages[stage] !== "passed") || "runtime_start";
+  const current = parseStageFromState(stages);
   return { stages, current, history: Array.isArray(parsed?.history) ? parsed.history.slice(-20) : [] };
 }
 
@@ -204,21 +161,6 @@ function parseAutonomousFeedback(projectRoot) {
   };
 }
 
-function detectIdleBeforeMinimum(campaign, running) {
-  if (!campaign?.present) return null;
-  const minMinutes = 360;
-  const active = Boolean(running?.active);
-  const endedOrIdle = campaign.running === false && !active;
-  if (!endedOrIdle) return null;
-  if (campaign.targetPassed) return null;
-  if (Number(campaign.elapsedMinutes || 0) >= minMinutes) return null;
-  return {
-    failed: true,
-    minMinutes,
-    elapsedMinutes: Number(campaign.elapsedMinutes || 0),
-    message: `Campaign went idle before ${minMinutes} minutes (${campaign.elapsedMinutes}m).`
-  };
-}
 
 function parsePromptMeta(projectRoot) {
   const metadataFile = path.join(projectRoot, "debug", "provider-prompts.metadata.jsonl");
@@ -381,115 +323,6 @@ function parseRecoveryEvents(projectRoot) {
   return readJsonlTail(file, 60);
 }
 
-function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
-  const nowMs = Date.now();
-  const windowMs = 30 * 60 * 1000;
-  const isFreshIso = (value) => {
-    const ms = Date.parse(String(value || ""));
-    return Number.isFinite(ms) && nowMs - ms <= windowMs;
-  };
-  const recent = Array.isArray(prompt?.recent) ? prompt.recent : [];
-  const recentFailures = recent
-    .filter((row) => row && row.ok === false)
-    .map((row) => ({
-      ...row,
-      error: String(row?.error || "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .filter((line) => !/\bdep0040\b|punycode|loaded cached credentials|hook registry initialized/i.test(line))
-        .join(" ")
-    }))
-    .filter((row) => row.error.length > 0 || String(row?.outputPreview || "").trim().length > 0)
-    .filter((row) => isFreshIso(row.at));
-  const lastFailure = recentFailures.at(-1);
-  const outputPreview = String(prompt?.lastOutputPreview || "").toLowerCase();
-  const lastErrorText = String(lastFailure?.error || prompt?.lastError || campaign?.lastError || "").toLowerCase();
-  const runStatusFresh = isFreshIso(runStatus?.raw?.at);
-  const campaignFresh = isFreshIso(campaign?.updatedAt);
-  const lastErrorEffective = runStatusFresh || campaignFresh ? lastErrorText : "";
-  const nonDelivery =
-    outputPreview.includes("ready for your command") ||
-    outputPreview.trim() === "" ||
-    lastErrorEffective.includes("empty output");
-  const unusableDelivery =
-    /unable to (proceed|fix|continue).*(tool|tools).*(not available|limitations)|cannot .*tool|tool limitations|limitations in my current toolset/i.test(
-      outputPreview
-    ) ||
-    /unable to (proceed|fix|continue).*(tool|tools).*(not available|limitations)|cannot .*tool|tool limitations|limitations in my current toolset/i.test(
-      lastErrorEffective
-    );
-  const providerBlocked = /provider_backoff|provider_blocked|provider_quota_recovery/i.test(String(campaign?.phase || ""));
-  const quotaLike = /quota|capacity|429|terminalquotaerror/i.test(lastErrorEffective);
-  const journalBlocked = (campaignJournal || []).some((row) => /campaign\.provider\.blocked/i.test(String(row?.event || "")));
-
-  let state = "healthy";
-  let summary = "Provider delivering responses.";
-  if (providerBlocked || journalBlocked || quotaLike) {
-    state = "blocked";
-    summary = "Provider delivery blocked (quota/capacity or hard failure).";
-  } else if (nonDelivery || unusableDelivery || recentFailures.length >= 2) {
-    state = "degraded";
-    summary = "Provider is responding but not delivering usable payloads consistently.";
-  }
-
-  const summarizeReason = (input) => {
-    const raw = String(input || "");
-    const compact = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .filter((line) => !/\bdep0040\b|punycode|loaded cached credentials|hook registry initialized/i.test(line))
-      .join(" ");
-    const reset = compact.match(/quota will reset after\s+([^.,]+)/i)?.[1]?.trim();
-    if (/\bterminalquotaerror\b|\bretryablequotaerror\b|\bexhausted your capacity\b|\bcode:\s*429\b|\b429\b/i.test(compact)) {
-      return reset ? `Provider quota exhausted (resets in ${reset}).` : "Provider quota exhausted (HTTP 429).";
-    }
-    if (/\betimedout\b|\btimed out\b/i.test(compact)) {
-      return "Provider call timed out before response.";
-    }
-    if (/\bempty output\b|ready for your command/i.test(compact)) {
-      return "Provider returned non-delivery/empty payload.";
-    }
-    if (!compact) {
-      return "Provider delivery blocked.";
-    }
-    return compact.length > 180 ? `${compact.slice(0, 180)}...` : compact;
-  };
-  const blockingReason = state === "blocked" ? summarizeReason(lastErrorEffective || lastFailure?.error || "provider delivery blocked") : "";
-  const recentFailuresCompact = recentFailures.slice(-4).map((row) => ({
-    at: String(row.at || ""),
-    stage: String(row.stage || ""),
-    error: String(row.error || "")
-  }));
-
-  return {
-    state,
-    summary,
-    nonDelivery,
-    recentFailureCount: recentFailures.length,
-    blockingReason,
-    recentFailures: recentFailuresCompact,
-    lastFailureAt: String(lastFailure?.at || "")
-  };
-}
-
-function summarizeBlockerReason(reason) {
-  const text = String(reason || "");
-  if (!text) return "No blocker reason recorded.";
-  if (/quota|429|capacity/i.test(text)) return text;
-  if (/timeout|timed out|etimedout/i.test(text)) return "Provider timeout while waiting for model response.";
-  if (/empty output|non-delivery|ready for your command/i.test(text)) return "Provider returned empty/non-actionable output.";
-  if (/lifecycle|build|test|lint|smoke/i.test(text)) return "Quality gate failure in lifecycle checks.";
-  return text.length > 140 ? `${text.slice(0, 140)}...` : text;
-}
-
-function findLastPassedStage(stageTimeline) {
-  if (!Array.isArray(stageTimeline)) return "";
-  const reversed = [...stageTimeline].reverse();
-  const hit = reversed.find((row) => String(row?.status || "").toLowerCase() === "passed");
-  return String(hit?.stage || "");
-}
 
 function listSddProcesses() {
   try {
@@ -699,69 +532,6 @@ function parseReleases(projectRoot) {
   };
 }
 
-function computeValueScore(stage, lifecycle, review, releases) {
-  let score = 100;
-  score -= lifecycle.fail * 12;
-  score -= lifecycle.skipped * 3;
-  if (!review.present) score -= 8;
-  if (review.present && !review.passed) score -= 20;
-  if (stage.stages?.final_release !== "passed") score -= 10;
-  if (stage.stages?.runtime_start !== "passed") score -= 8;
-  if (releases.finals === 0) score -= 8;
-  return Math.max(0, Math.min(100, score));
-}
-
-function getProjectHealth(stage, lifecycle, review) {
-  const finalPassed = stage.stages?.final_release === "passed";
-  const runtimePassed = stage.stages?.runtime_start === "passed";
-  if (finalPassed && runtimePassed && lifecycle.fail === 0 && (review.present ? review.passed : true)) {
-    return "healthy";
-  }
-  if (lifecycle.fail > 0 || stage.stages?.quality_validation === "failed" || stage.stages?.role_review === "failed") {
-    return "critical";
-  }
-  return "in_progress";
-}
-
-function inferLastEvent({ stageTimeline, campaignJournal, journal, prompt }) {
-  const candidates = [];
-  const stageLast = Array.isArray(stageTimeline) ? stageTimeline.at(-1) : null;
-  if (stageLast?.at) {
-    candidates.push({
-      at: String(stageLast.at),
-      source: "stage",
-      summary: `${String(stageLast.stage || "stage")} -> ${String(stageLast.status || "unknown")}`
-    });
-  }
-  const campaignLast = Array.isArray(campaignJournal) ? campaignJournal.at(-1) : null;
-  if (campaignLast?.at) {
-    candidates.push({
-      at: String(campaignLast.at),
-      source: "campaign",
-      summary: `${String(campaignLast.event || "campaign")}${campaignLast.details ? `: ${String(campaignLast.details).slice(0, 180)}` : ""}`
-    });
-  }
-  const runLast = Array.isArray(journal) ? journal.at(-1) : null;
-  if (runLast?.at) {
-    candidates.push({
-      at: String(runLast.at),
-      source: "orchestration",
-      summary: `${String(runLast.event || "run")}${runLast.details ? `: ${String(runLast.details).slice(0, 180)}` : ""}`
-    });
-  }
-  if (prompt?.lastAt) {
-    candidates.push({
-      at: String(prompt.lastAt),
-      source: "prompt",
-      summary: `prompt ${String(prompt.lastStage || "unknown")} ${prompt.lastOk ? "ok" : "fail"}`
-    });
-  }
-  if (candidates.length === 0) {
-    return { at: "", source: "", summary: "" };
-  }
-  candidates.sort((a, b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
-  return candidates.at(-1) || { at: "", source: "", summary: "" };
-}
 
 function suggestRecoveryCommand(projectName, stage, lifecycle) {
   const base = `node dist/cli.js --provider gemini --non-interactive --project "${projectName}" --iterations 10 --max-runtime-minutes 120`;
@@ -938,164 +708,6 @@ function parseStageProducts(projectRoot, releases) {
   return catalog;
 }
 
-function buildStageResults(stage, stageProducts) {
-  return STAGE_ORDER.map((name) => {
-    const status = String(stage?.stages?.[name] || "pending");
-    const products = Array.isArray(stageProducts?.[name]) ? stageProducts[name] : [];
-    const present = products.filter((item) => item?.present).length;
-    const total = products.length;
-    return {
-      stage: name,
-      status,
-      artifactsPresent: present,
-      artifactsTotal: total
-    };
-  });
-}
-
-function suggestAutoActionsFromText(text) {
-  const lower = String(text || "").toLowerCase();
-  const actions = [];
-  if (lower.includes("terminalquotaerror") || lower.includes("exhausted your capacity") || lower.includes("429")) {
-    actions.push("rotate provider model and apply provider backoff");
-  }
-  if (lower.includes("ready for your command") || lower.includes("empty output")) {
-    actions.push("mark provider non-delivery and force regeneration retry");
-  }
-  if (lower.includes("jest encountered an unexpected token") || lower.includes("unexpected token 'export'")) {
-    actions.push("normalize module format and align jest config automatically");
-  }
-  if (lower.includes("eslint plugin") || lower.includes("eslint couldn't find")) {
-    actions.push("install missing eslint plugins/deps and regenerate lint config");
-  }
-  if (lower.includes("build for macos is supported only on macos")) {
-    actions.push("rewrite build scripts for host OS compatibility");
-  }
-  if (lower.includes("missing smoke/e2e npm script") || lower.includes("smoke")) {
-    actions.push("create cross-platform smoke script and wire package.json");
-  }
-  if (lower.includes("missing dummylocal integration doc")) {
-    actions.push("generate dummy-local.md integration artifact");
-  }
-  if (lower.includes("readme")) {
-    actions.push("normalize README sections and release artifact guidance");
-  }
-  return [...new Set(actions)].slice(0, 3);
-}
-
-function buildTopBlockers({ lifecycle, runStatus, providerSignal, blockReasons }) {
-  const candidates = [];
-  const runBlockers = Array.isArray(runStatus?.blockers) ? runStatus.blockers : [];
-  for (const reason of runBlockers.slice(0, 8)) {
-    const actions = suggestAutoActionsFromText(reason);
-    candidates.push({
-      source: "run-status",
-      reason: String(reason || ""),
-      actions
-    });
-  }
-  const lifeFailures = Array.isArray(lifecycle?.failItems) ? lifecycle.failItems : [];
-  for (const reason of lifeFailures.slice(0, 8)) {
-    const actions = suggestAutoActionsFromText(reason);
-    candidates.push({
-      source: "lifecycle",
-      reason: String(reason || ""),
-      actions
-    });
-  }
-  if (providerSignal?.state === "blocked" || providerSignal?.state === "degraded") {
-    const reason = providerSignal.blockingReason || providerSignal.summary || "provider delivery degraded";
-    const actions = suggestAutoActionsFromText(reason);
-    candidates.push({
-      source: "provider",
-      reason: String(reason),
-      actions
-    });
-  }
-  if (candidates.length === 0) {
-    return [];
-  }
-  const scored = candidates.map((item) => {
-    let severity = 1;
-    const lower = item.reason.toLowerCase();
-    if (/quota|capacity|429|terminalquotaerror|provider/i.test(lower)) severity = 5;
-    else if (/build|test|lint|smoke|failed|error/i.test(lower)) severity = 4;
-    else if (/missing|pending|blocked/i.test(lower)) severity = 3;
-    return { ...item, severity };
-  });
-  scored.sort((a, b) => b.severity - a.severity);
-  const unique = [];
-  const seen = new Set();
-  for (const item of scored) {
-    const key = item.reason.slice(0, 120).toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    unique.push(item);
-    if (unique.length >= 3) break;
-  }
-  return unique;
-}
-
-function isoToMs(value) {
-  const parsed = Date.parse(String(value || ""));
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function buildStageProgress(stage) {
-  const completed = STAGE_ORDER.filter((name) => stage.stages?.[name] === "passed").length;
-  const currentIndex = Math.max(0, STAGE_ORDER.indexOf(stage.current));
-  const percent = STAGE_ORDER.length === 0 ? 0 : Math.round((completed / STAGE_ORDER.length) * 100);
-  return {
-    order: STAGE_ORDER,
-    completed,
-    total: STAGE_ORDER.length,
-    currentIndex,
-    percent
-  };
-}
-
-function buildActivitySignals({ runStatus, prompt, campaign, stageTimeline, running }) {
-  const lastRunStatusMs = isoToMs(runStatus.raw?.at);
-  const lastPromptMs = isoToMs(prompt.lastAt);
-  const lastCampaignMs = isoToMs(campaign.updatedAt);
-  const lastStageMs = isoToMs(stageTimeline.at(-1)?.at);
-  const freshestMs = Math.max(lastRunStatusMs, lastPromptMs, lastCampaignMs, lastStageMs, 0);
-  const freshnessMinutes = freshestMs > 0 ? Math.floor((Date.now() - freshestMs) / 60000) : Number.POSITIVE_INFINITY;
-  const activeRun = Boolean(running?.active || campaign.running);
-  const staleThresholdMinutes = activeRun ? 8 : 20;
-  const stalled = activeRun && freshnessMinutes >= staleThresholdMinutes;
-  return {
-    lastRunStatusAt: runStatus.raw?.at || "",
-    lastPromptAt: prompt.lastAt || "",
-    lastCampaignAt: campaign.updatedAt || "",
-    freshestAt: freshestMs > 0 ? new Date(freshestMs).toISOString() : "",
-    freshnessMinutes: Number.isFinite(freshnessMinutes) ? freshnessMinutes : 9999,
-    stalled,
-    staleThresholdMinutes
-  };
-}
-
-function inferRecoveryState({ campaign, runStatus, recoveryAudit, activity }) {
-  const latestAudit = Array.isArray(recoveryAudit) ? recoveryAudit.at(-1) : null;
-  const latestAuditMs = isoToMs(latestAudit?.at);
-  const recentAudit = latestAuditMs > 0 && Date.now() - latestAuditMs <= 20 * 60 * 1000;
-  const campaignPhase = String(campaign?.phase || "");
-  const phaseRecovery = /recovery|provider_backoff|provider_quota_recovery|runtime_enforced_continue/i.test(campaignPhase);
-  const campaignRecovery = Boolean(campaign?.recoveryActive) || Boolean(campaign?.lastRecoveryAction);
-  const runStatusRecovery = Boolean(runStatus?.recovery?.command);
-  const fresh = Number(activity?.freshnessMinutes || 9999) <= 30;
-  const active = fresh && (phaseRecovery || campaignRecovery || recentAudit || runStatusRecovery);
-  const tier = String(campaign?.recoveryTier || latestAudit?.tier || "none");
-  const lastAction = String(campaign?.lastRecoveryAction || latestAudit?.action || "");
-  const lastAt = String(campaign?.updatedAt || latestAudit?.at || "");
-  return {
-    active,
-    tier,
-    lastAction,
-    lastAt,
-    source: campaign?.lastRecoveryAction ? "campaign" : latestAudit?.action ? "audit" : runStatusRecovery ? "run-status" : ""
-  };
-}
 
 function buildProjectRow(projectRoot, name, processRows) {
   const lifecycle = parseLifecycle(projectRoot);
