@@ -156,7 +156,7 @@
     const setText = (id, value) => { document.getElementById(id).textContent = value; };
 
     function esc(value) {
-      return String(value || '').replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+      return String(value ?? '').replace(/[&<>"']/g, (m) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
     }
 
     function minutesFromIso(value) {
