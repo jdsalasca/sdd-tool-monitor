@@ -404,8 +404,30 @@ function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
     summary = "Provider is responding but not delivering usable payloads consistently.";
   }
 
-  const blockingReason =
-    state === "blocked" ? String(campaign?.lastError || lastFailure?.error || "provider delivery blocked") : "";
+  const summarizeReason = (input) => {
+    const raw = String(input || "");
+    const compact = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !/\bdep0040\b|punycode|loaded cached credentials|hook registry initialized/i.test(line))
+      .join(" ");
+    const reset = compact.match(/quota will reset after\s+([^.,]+)/i)?.[1]?.trim();
+    if (/\bterminalquotaerror\b|\bretryablequotaerror\b|\bexhausted your capacity\b|\bcode:\s*429\b|\b429\b/i.test(compact)) {
+      return reset ? `Provider quota exhausted (resets in ${reset}).` : "Provider quota exhausted (HTTP 429).";
+    }
+    if (/\betimedout\b|\btimed out\b/i.test(compact)) {
+      return "Provider call timed out before response.";
+    }
+    if (/\bempty output\b|ready for your command/i.test(compact)) {
+      return "Provider returned non-delivery/empty payload.";
+    }
+    if (!compact) {
+      return "Provider delivery blocked.";
+    }
+    return compact.length > 180 ? `${compact.slice(0, 180)}...` : compact;
+  };
+  const blockingReason = state === "blocked" ? summarizeReason(campaign?.lastError || lastFailure?.error || "provider delivery blocked") : "";
   const recentFailuresCompact = recentFailures.slice(-4).map((row) => ({
     at: String(row.at || ""),
     stage: String(row.stage || ""),
@@ -421,6 +443,23 @@ function parseProviderSignal({ campaign, prompt, runStatus, campaignJournal }) {
     recentFailures: recentFailuresCompact,
     lastFailureAt: String(lastFailure?.at || "")
   };
+}
+
+function summarizeBlockerReason(reason) {
+  const text = String(reason || "");
+  if (!text) return "No blocker reason recorded.";
+  if (/quota|429|capacity/i.test(text)) return text;
+  if (/timeout|timed out|etimedout/i.test(text)) return "Provider timeout while waiting for model response.";
+  if (/empty output|non-delivery|ready for your command/i.test(text)) return "Provider returned empty/non-actionable output.";
+  if (/lifecycle|build|test|lint|smoke/i.test(text)) return "Quality gate failure in lifecycle checks.";
+  return text.length > 140 ? `${text.slice(0, 140)}...` : text;
+}
+
+function findLastPassedStage(stageTimeline) {
+  if (!Array.isArray(stageTimeline)) return "";
+  const reversed = [...stageTimeline].reverse();
+  const hit = reversed.find((row) => String(row?.status || "").toLowerCase() === "passed");
+  return String(hit?.stage || "");
 }
 
 function listSddProcesses() {
@@ -1013,6 +1052,17 @@ function buildProjectRow(projectRoot, name, processRows) {
   if (providerSignal.state === "blocked") blockReasons.push("provider-delivery-blocked");
   if (providerSignal.state === "degraded") blockReasons.push("provider-delivery-degraded");
   const topBlockers = buildTopBlockers({ lifecycle, runStatus, providerSignal, blockReasons });
+  const primaryBlocker = topBlockers.length > 0
+    ? {
+        source: String(topBlockers[0].source || ""),
+        reason: summarizeBlockerReason(topBlockers[0].reason || ""),
+        actions: Array.isArray(topBlockers[0].actions) ? topBlockers[0].actions : []
+      }
+    : {
+        source: "",
+        reason: "No critical blocker detected.",
+        actions: []
+      };
   const recommendedNextAction =
     autonomousFeedback.actions?.[0]?.title ||
     topBlockers?.[0]?.actions?.[0] ||
@@ -1042,6 +1092,8 @@ function buildProjectRow(projectRoot, name, processRows) {
     campaignDebug,
     providerSignal,
     topBlockers,
+    primaryBlocker,
+    lastPassedStage: findLastPassedStage(stageTimeline),
     recommendedNextAction,
     recoveryState,
     recoveryAudit: recoveryAudit.slice(-10),

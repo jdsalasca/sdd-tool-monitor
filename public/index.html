@@ -201,6 +201,7 @@
       const topBlockers = Array.isArray(project.topBlockers) ? project.topBlockers : [];
       const lastEvent = project.lastEvent || { at: '', source: '', summary: '' };
       const providerSignal = project.providerSignal || { state: 'healthy', summary: 'n/a', recentFailureCount: 0, blockingReason: '' };
+      const primaryBlocker = project.primaryBlocker || { source: '', reason: 'No critical blocker detected.', actions: [] };
       const recoveryState = project.recoveryState || { active: false, tier: 'none', lastAction: '', lastAt: '' };
       const runtimeVisualProbe = project.runtimeVisualProbe || { present: false, ok: false, captured: false, blankLikely: false, summary: '', screenshotPath: '', stats: null, staticLikely: false };
       const softwareDiagnostic = project.softwareDiagnostic || {
@@ -222,6 +223,7 @@
       const autonomousFeedback = project.autonomousFeedback || { present: false, summary: '', rootCauses: [], actions: [] };
       const recoveryEvents = Array.isArray(project.recoveryEvents) ? project.recoveryEvents : [];
       const recommendedNextAction = project.recommendedNextAction || 'Continue lifecycle to next quality gate';
+      const lastPassedStage = project.lastPassedStage || 'none';
       const provider = esc(project.runStatus?.raw?.provider || project.prompt?.recent?.[project.prompt.recent.length - 1]?.provider || 'n/a');
       const model = esc(project.runStatus?.raw?.model || 'n/a');
       const heartbeat = Number(project.activity?.freshnessMinutes ?? 9999);
@@ -305,6 +307,8 @@
           <div class='text'>Suite: running=${suite.running ? 'true' : 'false'} | pid=${esc(suite.suitePid || 0)} | phase=${esc(suite.phase || 'n/a')} | target=${esc(suite.targetStage || 'n/a')} | stalls=${esc(suite.stallCount || 0)}</div>
           <div class='text'>Suite nextFromStep: ${esc(suite.nextFromStep || 'n/a')} | lastError: ${esc(suite.lastError || 'none')}</div>
           <div class='text'>Auto-recovery: <span class='tag ${recoveryState.active ? 'recovering' : 'in_progress'}'>${recoveryState.active ? 'active' : 'idle'}</span> | tier=${esc(recoveryState.tier || 'none')} | action=${esc(recoveryState.lastAction || 'n/a')} | at=${esc(recoveryState.lastAt || 'n/a')}</div>
+          <div class='text'><b>Primary blocker:</b> ${esc(primaryBlocker.reason || 'none')} ${primaryBlocker.source ? `(${esc(primaryBlocker.source)})` : ''}</div>
+          <div class='text'><b>Last successful stage:</b> ${esc(lastPassedStage)}</div>
           <div class='text'><b>Next action:</b> ${esc(recommendedNextAction)}</div>
           <div class='text'>Last event: ${esc(lastEvent.at || 'n/a')} | ${esc(lastEvent.source || 'n/a')} | ${esc(lastEvent.summary || 'n/a')}</div>
           <div class='text'>Delivery signal: <span class='tag ${esc(providerSignal.state)}'>${esc(providerSignal.state)}</span> | ${esc(providerSignal.summary || '')}</div>
@@ -318,6 +322,7 @@
           <div class='text'>Lifecycle failures: ${esc(project.lifecycle?.fail || 0)} | Blocking reasons: ${esc((project.blockReasons || []).length)}</div>
           <div class='text'>Recovery lane: ${recoveryState.active ? 'auto-healing active' : 'not active'} | tier ${esc(recoveryState.tier || 'none')}</div>
           <div class='text'>Provider delivery: ${esc(providerSignal.state)} | ${esc(providerSignal.summary || '')}</div>
+          <div class='text'>Primary blocker: ${esc(primaryBlocker.reason || 'none')}</div>
           <div class='text'>AI last task: ${esc(project.prompt?.lastStage || 'n/a')} in ${esc(humanDuration(aiLastDurationMs))}</div>
           <div class='text'>Current campaign: cycle ${esc(project.campaign?.cycle || 0)} | phase ${esc(project.campaign?.phase || 'n/a')}</div>
         </div>
@@ -569,6 +574,7 @@
           ? `cycle ${p.campaign.cycle} | ${p.campaign.elapsedMinutes}m | ${p.campaign.phase || 'n/a'}`
           : 'idle';
         const deliveryState = p.providerSignal?.state || 'healthy';
+        const primaryBlocker = p.primaryBlocker?.reason || 'none';
         const topBlockersCount = Array.isArray(p.topBlockers) ? p.topBlockers.length : 0;
         const lifecycleText = p.lifecycle.present ? `OK:${p.lifecycle.ok} FAIL:${p.lifecycle.fail}` : 'missing';
         const runningPid = p.running?.processId || p.campaign?.suitePid || 0;
@@ -585,7 +591,7 @@
           <td class='mono'>${esc(stageText)}<br><span class='muted'>${esc(p.stageProgress?.percent || 0)}%</span></td>
           <td>${esc(lifecycleText)}</td>
           <td class='mono'>${esc(runningText)}<br><span class='muted'>hb ${esc(heartbeat)}m${stale ? ' stalled' : ''} | ai ${esc(humanDuration(aiLast))}</span></td>
-          <td><span class='tag ${esc(deliveryState)}'>${esc(deliveryState)}</span><br><span class='muted'>${esc(campaignText)} | blockers ${esc(topBlockersCount)} | next ${esc(nextAction.slice(0, 42))}</span></td>
+          <td><span class='tag ${esc(deliveryState)}'>${esc(deliveryState)}</span><br><span class='muted'>${esc(campaignText)} | blockers ${esc(topBlockersCount)} | ${esc(primaryBlocker.slice(0, 46))}</span></td>
           <td><button class='btn icon' onclick='event.stopPropagation();refreshProjectByName("${esc(p.name)}")' title='Refresh project'>↻</button></td>
         `;
         rows.appendChild(tr);
