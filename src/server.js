@@ -168,7 +168,8 @@ function startSuite(project) {
   const child = spawn(process.execPath, args, {
     cwd: sddRoot,
     detached: true,
-    stdio: ["ignore", outFd, errFd]
+    stdio: ["ignore", outFd, errFd],
+    windowsHide: process.platform === "win32"
   });
   child.unref();
   return { pid: child.pid, outFile, errFile };

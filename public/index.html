@@ -26,7 +26,7 @@
     .sub { color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
     #updated { text-align: right; }
     #action-status { margin-top: 6px; color: #b9e4ff; }
-    .grid { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+    .grid { display: grid; grid-template-columns: repeat(11, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
     .kpi { background: linear-gradient(180deg, var(--card), var(--card-2)); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 68px; }
     .kpi .k { color: var(--muted); font-size: 11px; margin-bottom: 4px; line-height: 1.1; }
     .kpi .v { font-size: 21px; font-weight: 700; line-height: 1; }
@@ -119,6 +119,7 @@
       <div class="kpi"><div class="k">Stalled</div><div id="k-stalled" class="v">0</div></div>
       <div class="kpi"><div class="k">Blocked Projects</div><div id="k-blocked" class="v">0</div></div>
       <div class="kpi"><div class="k">Avg Value Score</div><div id="k-value" class="v">0</div></div>
+      <div class="kpi"><div class="k">Model Cooldowns</div><div id="k-cooldowns" class="v">0</div></div>
     </div>
 
     <div class="layout">
@@ -176,6 +177,15 @@
       return `${s}s`;
     }
 
+    function humanMinutes(minutes) {
+      const value = Number(minutes || 0);
+      if (!Number.isFinite(value) || value <= 0) return '0m';
+      const h = Math.floor(value / 60);
+      const m = value % 60;
+      if (h > 0) return `${h}h ${m}m`;
+      return `${m}m`;
+    }
+
     function renderStageBar(project) {
       const stages = project.stage?.stages || {};
       const current = project.runStatus?.stageCurrent || project.stage?.current || 'discovery';
@@ -188,8 +198,19 @@
 
     function renderDetail(project) {
       const container = document.getElementById('detail');
+      const cooldowns = state.snapshot?.modelCooldowns || { present: false, entries: [], summary: { totalUnavailable: 0, nearestResetMinutes: null } };
+      const cooldownRows = (cooldowns.entries || []).slice(0, 10).map((row) =>
+        `<li>${esc(row.provider)} | ${esc(row.model)} | reset in ${esc(humanMinutes(row.remainingMinutes))}${row.reason ? ` | ${esc(row.reason)}` : ''}</li>`
+      ).join('');
+      const cooldownCard = `
+        <div class='card'>
+          <h3>Model Cooldowns</h3>
+          <div class='text'>Blocked models: ${esc(cooldowns.summary?.totalUnavailable || 0)} | Next reset: ${cooldowns.summary?.nearestResetMinutes == null ? 'n/a' : esc(humanMinutes(cooldowns.summary.nearestResetMinutes))}</div>
+          <ul class='text'>${cooldownRows || '<li>none</li>'}</ul>
+        </div>
+      `;
       if (!project) {
-        container.innerHTML = `<div class='muted'>Select a project to inspect details.</div>`;
+        container.innerHTML = `${cooldownCard}<div class='muted'>Select a project to inspect details.</div>`;
         return;
       }
       const recovery = esc(project.recovery || '');
@@ -290,6 +311,7 @@
       const showTech = (html) => !isExecutive ? html : '';
 
       container.innerHTML = `
+        ${cooldownCard}
         <div class='card'>
           <h3>${esc(project.name)} <button class='btn icon' onclick='refreshSelectedProject()' title='Refresh this project'>↻</button></h3>
           <div class='text'>Root: ${esc(project.projectRoot)}</div>
@@ -562,6 +584,7 @@
       setText('k-stalled', String(snapshot.summary.stalledProjects || 0));
       setText('k-blocked', String(snapshot.summary.blockedProjects || 0));
       setText('k-value', String(snapshot.summary.avgValueScore));
+      setText('k-cooldowns', String(snapshot.modelCooldowns?.summary?.totalUnavailable || 0));
 
       const rows = document.getElementById('rows');
       rows.innerHTML = '';

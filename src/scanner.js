@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { execSync } from "child_process";
 import { resolveWorkspaceRoot } from "./config.js";
@@ -533,6 +534,70 @@ function parseSuiteLock(workspaceRoot) {
     present: true,
     pid,
     startedAt: String(parsed?.startedAt || "")
+  };
+}
+
+function resolveStateBaseDir(appName = "sdd-cli") {
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(appData, appName);
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", appName);
+  }
+  const xdg = process.env.XDG_STATE_HOME || process.env.XDG_CONFIG_HOME;
+  if (xdg && xdg.trim().length > 0) {
+    return path.join(xdg.trim(), appName);
+  }
+  return path.join(os.homedir(), ".local", "state", appName);
+}
+
+function parseModelAvailabilityCache() {
+  const cacheFile = path.join(resolveStateBaseDir("sdd-cli"), "state", "model-availability-cache.json");
+  const parsed = readJson(cacheFile);
+  if (!parsed || typeof parsed !== "object") {
+    return {
+      present: false,
+      file: cacheFile,
+      entries: [],
+      summary: { totalUnavailable: 0, activeProviders: 0, nearestResetMinutes: null }
+    };
+  }
+  const providers = parsed?.providers && typeof parsed.providers === "object" ? parsed.providers : {};
+  const now = Date.now();
+  const entries = [];
+  for (const [provider, models] of Object.entries(providers)) {
+    if (!models || typeof models !== "object") continue;
+    for (const [model, row] of Object.entries(models)) {
+      const unavailableUntilMs = Number(row?.unavailableUntilMs || 0);
+      if (!Number.isFinite(unavailableUntilMs) || unavailableUntilMs <= now) continue;
+      const remainingMs = Math.max(0, unavailableUntilMs - now);
+      const remainingMinutes = Math.ceil(remainingMs / 60000);
+      entries.push({
+        provider: String(provider || ""),
+        model: String(model || ""),
+        reason: String(row?.reason || ""),
+        hint: String(row?.hint || ""),
+        updatedAt: String(row?.updatedAt || ""),
+        unavailableUntilMs,
+        unavailableUntil: new Date(unavailableUntilMs).toISOString(),
+        remainingMs,
+        remainingMinutes
+      });
+    }
+  }
+  entries.sort((a, b) => a.remainingMs - b.remainingMs);
+  const activeProviders = new Set(entries.map((entry) => entry.provider).filter(Boolean)).size;
+  const nearestResetMinutes = entries.length > 0 ? entries[0].remainingMinutes : null;
+  return {
+    present: true,
+    file: cacheFile,
+    entries,
+    summary: {
+      totalUnavailable: entries.length,
+      activeProviders,
+      nearestResetMinutes
+    }
   };
 }
 
@@ -1118,6 +1183,7 @@ export async function scanProjects(explicitWorkspace) {
   const projects = [];
   const processRows = listSddProcesses();
   const suiteLock = parseSuiteLock(workspaceRoot);
+  const modelCooldowns = parseModelAvailabilityCache();
 
   if (fs.existsSync(workspaceRoot)) {
     const entries = fs.readdirSync(workspaceRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
@@ -1187,6 +1253,7 @@ export async function scanProjects(explicitWorkspace) {
     at: new Date().toISOString(),
     workspaceRoot,
     summary,
+    modelCooldowns,
     projects
   };
 }
